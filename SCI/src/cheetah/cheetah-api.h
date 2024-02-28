@@ -5,6 +5,7 @@
 #include "gemini/cheetah/hom_bn_ss.h"
 #include "gemini/cheetah/hom_conv2d_ss.h"
 #include "gemini/cheetah/hom_fc_ss.h"
+#include "utils/emp-tool.h"
 
 namespace sci {
 class NetIO;
@@ -24,11 +25,39 @@ class CheetahLinear {
   ~CheetahLinear() = default;
 
   // HomConv
+  void conv_bias_relu_offline(const Tensor<uint64_t> &in_tensor,
+              const std::vector<Tensor<uint64_t>> &filters, int T,
+              const ConvMeta &meta, Tensor<uint64_t> &out_share0, Tensor<uint64_t> &out_share1,
+              int bitlength, int scale) const;
+  void conv_bias_relu_online(const Tensor<uint64_t> &in_tensor,
+                const Tensor<uint64_t> &M, const std::vector<Tensor<uint64_t>> &filters, int T,
+                const ConvMeta &meta, Tensor<uint64_t> &offline_share0, 
+                Tensor<uint64_t> &offline_share1, uint64_t *bias, bool *B, uint64_t *result,
+                int bitlength, int scale) const;
+  void get_random_zero_tensor(Tensor<uint64_t> &in_tensor, const ConvMeta &meta, bool zero=false) const;
+  void fc_get_random_zero_tensor(Tensor<uint64_t> &in_tensor, const FCMeta &meta, bool zero) const;
+  void conv2d_offline(const Tensor<uint64_t> &in_tensor,
+                      const std::vector<Tensor<uint64_t>> &filters,
+                      const ConvMeta &meta,Tensor<uint64_t> &out_tensor, bool BN=false) const;
+  void conv2d_online(const Tensor<uint64_t> &in_tensor,
+                    const Tensor<uint64_t> &M, const std::vector<Tensor<uint64_t>> &filters,
+                    const ConvMeta &meta, Tensor<uint64_t> &offline_share,
+                    uint64_t *result, bool BN=false) const;
   void conv2d(const Tensor<uint64_t> &in_tensor,
               const std::vector<Tensor<uint64_t>> &filters,
               const ConvMeta &meta, Tensor<uint64_t> &out_tensor) const;
 
   // HomFC
+  void fc_offline(const Tensor<uint64_t> &input_vector,
+                       const Tensor<uint64_t> &weight_matrix,
+                       const FCMeta &meta,
+                       Tensor<uint64_t> &out_vec_share) const;
+
+  void fc_online(const Tensor<uint64_t> &input_vector,
+                        const Tensor<uint64_t> &M,
+                        const Tensor<uint64_t> &weight_matrix,
+                        const FCMeta &meta, Tensor<uint64_t> &offline_share,
+                        Tensor<uint64_t> &out_vec_share) const;
   void fc(const Tensor<uint64_t> &input_matrix,
           const Tensor<uint64_t> &weight_matrix, const FCMeta &meta,
           Tensor<uint64_t> &out_matrix) const;

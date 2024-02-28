@@ -43,7 +43,10 @@ See [QA.md](QA.md).
   
 ### Building Cheetah and SCI-HE Demo
 
-* Run `bash scripts/build.sh` which will build 6 executables in the `build/bin` folder
+* Run `bash scripts/build.sh` which will build 9 executables in the `build/bin` folder
+	* `resnet50-hare` 
+	* `sqnet-hare`
+	* `densenet121-hare`
 	* `resnet50-cheetah` 
 	* `sqnet-cheetah`
 	* `densenet121-cheetah`
@@ -53,10 +56,10 @@ See [QA.md](QA.md).
 
 ### Local Demo 
 
-1. On one terminal run `bash scripts/run-server.sh cheetah sqnet`. The program will load the pretrained model in the folder `pretrained/` which might takes some time when the pretrained model is huge. 
+1. On one terminal run `bash scripts/run-server.sh hare sqnet`. The program will load the pretrained model in the folder `pretrained/` which might takes some time when the pretrained model is huge. 
 
-2. On other terminal run `bash scripts/run-client.sh cheetah sqnet`. The program will  load the prepared input image in the folder `pretrained`.  
-   * replace `cheetah` by `SCI_HE` to execute the CryptFlow2's counterpart.
+2. On other terminal run `bash scripts/run-client.sh hare sqnet`. The program will  load the prepared input image in the folder `pretrained`.  
+   * replace `hare` by `cheetah` to execute the Cheetah's counterpart.
    * replace `sqnet` by `resnet50` to run on the ResNet50 model.
 
 You can change the `SERVER_IP` and `SERVER_PORT` defined in the [scripts/common.sh](scripts/common.sh) to run the demo remotely.

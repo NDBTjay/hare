@@ -56,13 +56,9 @@ public:
     this->b = b;
     this->prime_mod = prime;
     this->otpack = otpack;
-    if (algeb_str == RING) {
-      if (relu_obj == nullptr) {
-        this->relu_oracle = new ReLURingProtocol<IO, type>(party, RING, io, l, b, otpack);
-        createdReluObj = true;
-      } else {
-        this->relu_oracle = (ReLURingProtocol<IO, type> *)relu_obj;
-      }
+    if (algeb_str == RING) {//argmax不能用我们的SS方案，因为会直接暴露出最大的标签
+      this->relu_oracle = new ReLURingProtocol<IO, type>(party, RING, io, l, b, otpack);
+      createdReluObj = true;
     } else {
       if (relu_obj == nullptr) {
         this->relu_field_oracle = new ReLUFieldProtocol<IO, type>(
@@ -110,13 +106,13 @@ public:
     type *input_argmax_temp = new type[size + 16];
 
     for (int i = 0; i < size; i++) {
-      input_temp[i] = inpArr[i];
-      input_argmax_temp[i] = 0;
+      input_temp[i] = inpArr[i]; //x
+      input_argmax_temp[i] = 0; //BOB的input_argmax_temp[i]为0
     }
 
     if (party == sci::ALICE) {
       for (type i = 0; i < (type)size; i++) {
-        input_argmax_temp[i] = i;
+        input_argmax_temp[i] = i; //ALICE的input_argmax_temp[i]为i
       }
     }
 
@@ -137,7 +133,7 @@ public:
 
     while (no_of_nodes > 1) {
       // std::cout<<"#nodes = "<<no_of_nodes<<std::endl;
-      no_of_nodes_child = (int)ceil((float)no_of_nodes / (float)2);
+      no_of_nodes_child = (int)ceil((float)no_of_nodes / (float)2);// 树中叶子结点数等于总数除以2
       pad1 = next_eight_multiple(no_of_nodes_child);
       pad1 = pad1 - no_of_nodes_child;
       pad2 = no_of_nodes + 2 * pad1;
@@ -156,7 +152,7 @@ public:
       }
 
       for (int i = no_of_nodes; i < pad2; i++) {
-        input_temp[i] = input_temp[no_of_nodes - 1];
+        input_temp[i] = input_temp[no_of_nodes - 1];// 取出nodes的最后一项
         input_argmax_temp[i] = input_argmax_temp[no_of_nodes - 1];
       }
 
@@ -169,7 +165,7 @@ public:
               this->prime_mod);
         }
       } else { // RING
-        for (int i = 0; i < (pad2); i += 2) {
+        for (int i = 0; i < (pad2); i += 2) {// 每两项进行比较
           compare_with[i / 2] = (input_temp[i] - input_temp[i + 1]);
           compare_with_argmax[i / 2] = (input_argmax_temp[i] - input_argmax_temp[i + 1]);
         }
@@ -183,7 +179,7 @@ public:
 
       if (this->algeb_str == FIELD) {
         for (int i = 0; i < (no_of_nodes_child); i++) {
-          input_temp[i] = (relu_res[i] + input_temp[2 * i + 1]) % this->prime_mod;
+          input_temp[i] = (relu_res[i] + input_temp[2 * i + 1]) % this->prime_mod;//如果relu结果为正，则为(a-b)+b=a，relu为负，则为0+b=b
           input_argmax_temp[i] = (argmax_res[i] + input_argmax_temp[2 * i + 1]) % this->prime_mod;
         }
       } else { // RING
@@ -195,13 +191,13 @@ public:
       no_of_nodes = no_of_nodes_child;
     } // number of nodes > 1
 
-    maxi[0] = input_argmax_temp[0];
+    maxi[0] = input_argmax_temp[0]; // 返回输出值
 
     if (get_max_too) {
       max_val[0] = input_temp[0];
     }
     if (this->algeb_str == RING) {
-      maxi[0] &= mask_l;
+      maxi[0] &= mask_l; // 输出值做处理
       if (get_max_too) {
         max_val[0] &= mask_l;
       }
@@ -227,7 +223,7 @@ public:
     } else { // RING
       relu_oracle->relu(result, share, num_relu, drelu_ans, true);
     }
-
+    
     // Now perform x.msb(x)
     // 2 OTs required with reversed roles
     sci::block128 *ot_messages_0 = new sci::block128[num_relu];
@@ -271,7 +267,7 @@ public:
         relu_field_oracle->otpack->iknp_straight->recv(received_shares, (bool *)drelu_ans, num_relu);
         relu_field_oracle->otpack->iknp_reversed->send(ot_messages_0, ot_messages_1, num_relu);
       } else {
-        relu_oracle->otpack->iknp_straight->recv(received_shares, (bool *)drelu_ans, num_relu);
+        relu_oracle->otpack->iknp_straight->recv(received_shares, (bool *)drelu_ans, num_relu);//用drelu_ans作为选择字接收数据
         relu_oracle->otpack->iknp_reversed->send(ot_messages_0, ot_messages_1, num_relu);
       }
     }

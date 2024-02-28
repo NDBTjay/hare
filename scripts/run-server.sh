@@ -3,15 +3,15 @@
 if [ ! $# -eq 2 ]
 then
   echo -e "${RED}Please specify the network to run.${NC}"
-  echo "Usage: run-server.sh [cheetah|SCI_HE] [sqnet/resnet50]"
+  echo "Usage: run-server.sh [cheetah|SCI_HE|hare] [sqnet/resnet50]"
 else
-  if ! contains "cheetah SCI_HE" $1; then
-    echo -e "Usage: run-server.sh ${RED}[cheetah|SCI_HE]${NC} [sqnet|resnet50|densenet121]"
+  if ! contains "cheetah SCI_HE hare" $1; then
+    echo -e "Usage: run-server.sh ${RED}[cheetah|SCI_HE|hare]${NC} [sqnet|resnet50|densenet121]"
 	exit 1
   fi
 
   if ! contains "sqnet resnet50 densenet121" $2; then
-    echo -e "Usage: run-server.sh [cheetah|SCI_HE] ${RED}[sqnet|resnet50|densenet121]${NC}"
+    echo -e "Usage: run-server.sh [cheetah|SCI_HE|hare] ${RED}[sqnet|resnet50|densenet121]${NC}"
 	exit 1
   fi
   # create a data/ to store the Ferret output

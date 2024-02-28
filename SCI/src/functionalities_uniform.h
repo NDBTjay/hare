@@ -498,7 +498,7 @@ void funcTruncateTwoPowerRingWrapper(int size, intType *inp, intType *outp, int 
     truncThreads[i].join();
   }
 #else
-  funcTruncateThread(0, size, inp, outp, consSF, bw, isSigned, msgShare);
+  funcTruncateThread(0, size, inp, outp, consSF, bw, isSigned, msbShare);
 #endif
 }
 #endif
@@ -812,6 +812,7 @@ void funcAvgPoolTwoPowerRing(int curParty, sci::NetIO *curio,
 void funcAvgPoolTwoPowerRingWrapper(int size, intType *inp, intType *outp,
                                     intType divisor) {
   assert(size % 8 == 0);
+#if !USE_HARE
 #ifdef MULTITHREADED_TRUNC
   std::thread truncThreads[num_threads];
   int chunk_size = (size / (8 * num_threads)) * 8;
@@ -838,6 +839,10 @@ void funcAvgPoolTwoPowerRingWrapper(int size, intType *inp, intType *outp,
   funcAvgPoolTwoPowerRing(party, io, otpack, iknpOT, kkot, relu, prg128Instance,
                           size, inp, outp, divisor);
 #endif
+#else //USE_HARE
+  funcAvgPoolTwoPowerRing(party, io, otpack, iknpOT, kkot, relu, prg128Instance,
+                          size, inp, outp, divisor);
+#endif //USE_HARE
 }
 
 /*

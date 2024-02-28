@@ -51,6 +51,6 @@ SERVER_PORT=12345
 # fixed-point scale
 FXP_SCALE=12
 # secret sharing bit length
-SS_BITLEN=37
+SS_BITLEN=41
 # number of threads (should <= 4 for the SCI)
 NUM_THREADS=4

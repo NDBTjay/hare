@@ -168,8 +168,10 @@ void AdjustScaleShr(uint64_t *A, uint64_t *B, int32_t I, int32_t J, int32_t bwA,
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   MatAddTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current AdjustScaleShr = " << (temp / 1000.0)
             << std::endl;
+#endif
   MatAddCommSent += curComm;
 #endif
 }
@@ -225,8 +227,10 @@ void MatAdd(uint64_t *A, uint64_t *B, uint64_t *C, int32_t I, int32_t J,
   FIND_ALL_IO_TILL_NOW(curComm);
   if (!subroutine) {
     MatAddTimeInMilliSec += temp;
+#ifndef NO_PRINT
     std::cout << "Time in sec for current MatAdd = " << (temp / 1000.0)
               << std::endl;
+#endif
     MatAddCommSent += curComm;
   }
 #endif
@@ -278,8 +282,10 @@ void MatAddBroadCast(uint64_t *A, uint64_t *B, uint64_t *C, int32_t I,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   MatAddBroadCastTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current MatAddBroadCast = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   MatAddBroadCastCommSent += curComm;
@@ -321,8 +327,10 @@ void AddOrSubCir(uint64_t *A, uint64_t *B, uint64_t *C, int32_t I, int32_t J,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   MatAddTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current AddOrSubCir = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   MatAddCommSent += curComm;
@@ -365,8 +373,10 @@ void ScalarMul(uint64_t *A, uint64_t *B, uint64_t *C, int32_t I, int32_t J,
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   ScalarMulTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current ScalarMul = " << (temp / 1000.0)
             << std::endl;
+#endif
   ScalarMulCommSent += curComm;
 #endif
 }
@@ -430,8 +440,10 @@ void MulCir(int64_t I, int64_t J, int64_t shrA, int64_t shrB, int64_t demote,
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   MulCirTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current MulCir = " << (temp / 1000.0)
             << std::endl;
+#endif
   MulCirCommSent += curComm;
 #endif
 
@@ -560,8 +572,10 @@ void MatMul(int64_t I, int64_t K, int64_t J, int64_t shrA, int64_t shrB,
   FIND_ALL_IO_TILL_NOW(curComm);
   MatMulCommSent += curComm;
   MatMulTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current MatMul = " << (temp / 1000.0)
             << std::endl;
+#endif
 #endif
 }
 
@@ -677,8 +691,10 @@ void Sigmoid(int64_t I, int64_t J, int64_t scale_in, int64_t scale_out,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   SigmoidTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current Sigmoid = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   SigmoidCommSent += curComm;
@@ -750,8 +766,10 @@ void TanH(int64_t I, int64_t J, int64_t scale_in, int64_t scale_out,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   TanhTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current TanH = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   TanhCommSent += curComm;
@@ -821,8 +839,10 @@ void Sqrt(int64_t I, int64_t J, int64_t scale_in, int64_t scale_out,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   SqrtTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current Sqrt = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   SqrtCommSent += curComm;
@@ -885,8 +905,10 @@ void ArgMax(uint64_t *A, int32_t I, int32_t J, int32_t bwA, int32_t bw_index,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   ArgMaxTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current ArgMax = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   ArgMaxCommSent += curComm;
@@ -915,8 +937,10 @@ void MaxPool2D(uint64_t *A, int32_t I, int32_t J, int32_t bwA, int32_t bwB,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   MaxpoolTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current MaxPool = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   MaxpoolCommSent += curComm;
@@ -1080,8 +1104,10 @@ void Convolution(int32_t N, int32_t H, int32_t W, int32_t CIN, int32_t HF,
   FIND_ALL_IO_TILL_NOW(curComm);
   ConvCommSent += curComm;
   ConvTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current Conv = " << (temp / 1000.0)
             << std::endl;
+#endif
 #endif
 
 #ifdef VERIFY_LAYERWISE
@@ -1154,8 +1180,10 @@ void ReLU(uint64_t *A, uint64_t *B, int32_t I, int32_t J, int32_t bwA,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   ReluTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current ReLU = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   ReluCommSent += curComm;
@@ -1232,8 +1260,10 @@ void BNorm(uint64_t *A, uint64_t *BNW, uint64_t *BNB, uint64_t *B, int32_t I,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   BatchNormInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current BatchNorm = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   BatchNormCommSent += curComm;
@@ -1293,8 +1323,10 @@ void NormaliseL2(uint64_t *A, uint64_t *B, int32_t I, int32_t J, int32_t bwA,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   NormaliseL2TimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current NormaliseL2 = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   NormaliseL2CommSent += curComm;

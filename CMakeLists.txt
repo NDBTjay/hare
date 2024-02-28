@@ -46,5 +46,21 @@ macro (add_network_cheetah _name)
 endmacro()
 
 add_network_cheetah(resnet50)
+add_network_cheetah(resnet50_seperate)
 add_network_cheetah(sqnet)
+add_network_cheetah(sqnet_seperate)
 add_network_cheetah(densenet121)
+add_network_cheetah(densenet121_seperate)
+
+macro (add_network_hare _name)
+  add_executable(${_name}-hare "networks/main_${_name}.cpp")
+  target_link_libraries(${_name}-hare gemini SCI-hare)
+  target_compile_definitions(${_name}-hare PUBLIC SCI_OT=1 USE_CHEETAH=1 USE_HARE=1)
+endmacro()
+
+add_network_hare(resnet50)
+add_network_hare(resnet50_seperate)# 线性层离线与在线分离+新ReLU协议
+add_network_hare(sqnet)
+add_network_hare(sqnet_seperate)
+add_network_hare(densenet121)
+add_network_hare(densenet121_seperate)

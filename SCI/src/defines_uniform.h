@@ -44,7 +44,9 @@ extern uint64_t prime_mod;
 #define RUNOPTI
 #ifdef RUNOPTI
 #define MULTITHREADED_MATMUL
+// #if !USE_HARE
 #define MULTITHREADED_NONLIN
+// #endif
 #define MULTITHREADED_TRUNC
 #define MULTITHREADED_DOTPROD
 #endif

@@ -7,6 +7,38 @@
 #include "gemini/cheetah/tensor_encoder.h"
 #include "utils/constants.h"  // ALICE & BOB
 #include "utils/net_io_channel.h"
+#include "globals.h"
+#define LOG_LAYERWISE
+
+#define Arr1DIdxRowM(arr, s0, i) (*((arr) + (i)))
+#define Arr2DIdxRowM(arr, s0, s1, i, j) (*((arr) + (i) * (s1) + (j)))
+#define Arr3DIdxRowM(arr, s0, s1, s2, i, j, k)                                 \
+  (*((arr) + (i) * (s1) * (s2) + (j) * (s2) + (k)))
+#define Arr4DIdxRowM(arr, s0, s1, s2, s3, i, j, k, l)                          \
+  (*((arr) + (i) * (s1) * (s2) * (s3) + (j) * (s2) * (s3) + (k) * (s3) + (l)))
+#define Arr5DIdxRowM(arr, s0, s1, s2, s3, s4, i, j, k, l, m)                   \
+  (*((arr) + (i) * (s1) * (s2) * (s3) * (s4) + (j) * (s2) * (s3) * (s4) +      \
+     (k) * (s3) * (s4) + (l) * (s4) + (m)))
+
+#define Arr2DIdxColM(arr, s0, s1, i, j) (*((arr) + (j) * (s0) + (i)))
+
+extern uint64_t Conv_sepOfflineTimeInMilliSec;
+extern uint64_t Conv_sepOnlineTimeInMilliSec;
+extern uint64_t Conv_sepOfflineCommSent;
+extern uint64_t Conv_sepOnlineCommSent;
+extern uint64_t Matmul_sepOfflineTimeInMilliSec;
+extern uint64_t Matmul_sepOnlineTimeInMilliSec;
+extern uint64_t Matmul_sepOfflineCommSent;
+extern uint64_t Matmul_sepOnlineCommSent;
+extern uint64_t BN_sepOfflineTimeInMilliSec;
+extern uint64_t BN_sepOnlineTimeInMilliSec;
+extern uint64_t BN_sepOfflineCommSent;
+extern uint64_t BN_sepOnlineCommSent;
+extern uint64_t FusedBN_ReLUOfflineTimeInMilliSec;
+extern uint64_t FusedBN_ReLUOnlineTimeInMilliSec;
+extern uint64_t FusedBN_ReLUOfflineCommSent;
+extern uint64_t FusedBN_ReLUOnlineCommSent;
+uint64_t mask_r = (uint64_t)((1ULL << 16) - 1);
 
 template <class CtType>
 void send_ciphertext(sci::NetIO *io, const CtType &ct) {
@@ -34,6 +66,11 @@ static void recv_encrypted_vector(sci::NetIO *io,
                                   bool is_truncated = false);
 static void recv_ciphertext(sci::NetIO *io, const seal::SEALContext &context,
                             seal::Ciphertext &ct, bool is_truncated = false);
+void decode_tensor(const gemini::Tensor<uint64_t> &in_tensor, uint64_t *out, int C, int H, int W, int bitlength);
+void print_shape(const gemini::Tensor<uint64_t> &tensor);
+void print_tensor(const gemini::Tensor<uint64_t> &tensor);
+static Code LaunchWorks(gemini::ThreadPool &tpool, size_t num_works,
+                        std::function<Code(long wid, size_t start, size_t end)> program);
 
 namespace gemini {
 
@@ -312,7 +349,7 @@ bool CheetahLinear::verify(const Tensor<uint64_t> &in_tensor_share,
     SummaryTensor(f64_in, "in_tensor");
 
     Tensor<uint64_t> ground;
-    conv2d_impl_.idealFunctionality(in_tensor, filters, meta, ground);
+    conv2d_impl_.idealFunctionality(in_tensor, filters, meta, ground, nthreads_);
 
     int cnt_err{0};
     for (auto c = 0; c < out_tensor.channels(); ++c) {
@@ -335,6 +372,156 @@ bool CheetahLinear::verify(const Tensor<uint64_t> &in_tensor_share,
   }
 
   return true;
+}
+
+void CheetahLinear::fc_offline(const Tensor<uint64_t> &input_vector,
+                       const Tensor<uint64_t> &weight_matrix,
+                       const FCMeta &meta,
+                       Tensor<uint64_t> &out_vec_share) const {
+#ifdef LOG_LAYERWISE
+    INIT_ALL_IO_DATA_SENT;
+    INIT_TIMER;
+#endif
+  if (!input_vector.shape().IsSameSize(meta.input_shape)) {
+    throw std::invalid_argument("CheetahLinear::fc input shape mismatch");
+  }
+
+  if (party_ == sci::ALICE &&
+      !weight_matrix.shape().IsSameSize(meta.weight_shape)) {
+    throw std::invalid_argument("CheetahLinear::fc weight shape mismatch");
+  }
+
+  TensorShape out_shape({meta.weight_shape.dim_size(0)});
+  if (!out_vec_share.shape().IsSameSize(out_shape)) {
+    // NOTE(Wen-jie) If the out_matrix may already wrap some memory
+    // Then this Reshape will raise error.
+    out_vec_share.Reshape(out_shape);
+  }
+  int dim1 = 1, dim2 = meta.weight_shape.cols(), dim3 = meta.weight_shape.rows();
+  
+  Code code;
+  int nthreads = nthreads_;
+  if (party_ == sci::BOB) {
+    // 生成随机矩阵M并加密，发送[M]给ALICE，此处M由外部传入
+    std::vector<seal::Serializable<seal::Ciphertext>> M_c;
+    code = fc_impl_.encryptInputVector(input_vector, meta, M_c, nthreads);
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::fc encryptInputVector [" +
+                                CodeMessage(code) + "]");
+    }
+    send_encrypted_vector(io_, M_c);
+    // 接收[W*M-R]，解密获得W*M-R作为输出<W*X>0
+    std::vector<seal::Ciphertext> W_mul_M_sub_R_c;
+    recv_encrypted_vector(io_, *context_, W_mul_M_sub_R_c);
+    code = fc_impl_.decryptToVector(W_mul_M_sub_R_c, meta, out_vec_share, nthreads);
+
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::fc decryptToVector [" +
+                               CodeMessage(code) + "]");
+    }
+  } else { //Alice
+    std::vector<std::vector<seal::Plaintext>> W_p;
+    code = fc_impl_.encodeWeightMatrix(weight_matrix, meta, W_p, nthreads);
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::fc encodeWeightMatrix error [" +
+                               CodeMessage(code) + "]");
+    }
+    // 接收[M]
+    std::vector<seal::Ciphertext> M_c;
+    recv_encrypted_vector(io_, *context_, M_c);
+    // 计算[W*M-R]，将R作为输出out_vec_share
+    std::vector<seal::Plaintext> vec_share1;
+    std::vector<seal::Ciphertext> W_mul_M_sub_R_c;
+    auto code = fc_impl_.matVecMul(W_p, M_c, vec_share1, meta,
+                               W_mul_M_sub_R_c, out_vec_share, nthreads);
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::fc matmul2D error [" +
+                               CodeMessage(code) + "]");
+    }
+    send_encrypted_vector(io_, W_mul_M_sub_R_c);
+  }
+#ifdef LOG_LAYERWISE
+    auto temp = TIMER_TILL_NOW;
+    uint64_t curComm;
+    FIND_ALL_IO_TILL_NOW(curComm);
+    Matmul_sepOfflineTimeInMilliSec += temp;
+    Matmul_sepOfflineCommSent += curComm;
+#endif
+}
+
+void CheetahLinear::fc_online(const Tensor<uint64_t> &input_vector,
+                        const Tensor<uint64_t> &M,
+                        const Tensor<uint64_t> &weight_matrix,
+                        const FCMeta &meta, Tensor<uint64_t> &offline_share,
+                        Tensor<uint64_t> &out_vec_share) const {
+#ifdef LOG_LAYERWISE
+    INIT_ALL_IO_DATA_SENT;
+    INIT_TIMER;
+#endif
+  TensorShape out_shape({meta.weight_shape.dim_size(0)});
+  if (!out_vec_share.shape().IsSameSize(out_shape)) {
+    // NOTE(Wen-jie) If the out_matrix may already wrap some memory
+    // Then this Reshape will raise error.
+    out_vec_share.Reshape(out_shape);
+  }
+  int dim1 = 1, dim2 = meta.weight_shape.cols(), dim3 = meta.weight_shape.rows();
+  if (party_ == sci::BOB) {
+    // 计算并发送X0-M
+    uint64_t *X0_sub_MArr = new uint64_t[dim2];
+    for (int i = 0; i < dim2; i++) {
+      X0_sub_MArr[i] = input_vector.data()[i] - M.data()[i];
+    }
+    io_->send_data(X0_sub_MArr, dim2 * sizeof(uint64_t));
+    for (int i = 0; i < dim3; i++) {
+      out_vec_share.data()[i] = offline_share.data()[i];
+    }
+  } else { // ALICE
+    // 接收X0-M
+    uint64_t *X0_sub_MArr = new uint64_t[dim2];
+    io_->recv_data(X0_sub_MArr, dim2 * sizeof(uint64_t));
+    // 计算X-M
+    uint64_t *X_sub_MArr = new uint64_t[dim2];
+    // for (int i = 0; i < dim2; i++) { 
+    //   // X_sub_MArr[i] = (X0_sub_MArr[i] + X1Arr[i]);
+    //   X_sub_MArr[i] = (X0_sub_MArr[i] + input_vector.data()[i]);
+    // }
+    // 计算W*(X-M)+R作为结果
+    gemini::Tensor<uint64_t> W_mul_XsbuM;
+    // auto eva = [&](long wid, size_t start, size_t end) {
+    //   for (int i = start; i < end; i++) {
+    //     X_sub_MArr[i] = (X0_sub_MArr[i] + input_vector.data()[i]);
+    //     out_vec_share.data()[i] = 0;
+    //     for (int j = 0; j < dim3; j++) {
+    //       out_vec_share.data()[i] += X_sub_MArr[i] * weight_matrix.data()[j*dim2+i];
+    //     }
+    //     out_vec_share.data()[i] += offline_share.data()[i];
+    //   }
+    //   return Code::OK;
+    // };
+    // gemini::ThreadPool tpool(nthreads_);
+    // LaunchWorks(tpool, dim2, eva);
+
+    // 计算X-M
+    for (int i = 0; i < dim2; i++) {
+      X_sub_MArr[i] = (X0_sub_MArr[i] + input_vector.data()[i]);
+    }
+    for (int i = 0; i < dim3; i++) {
+      out_vec_share.data()[i] = 0;
+      for (int j = 0; j < dim2; j++) {
+        out_vec_share.data()[i] += X_sub_MArr[j] * weight_matrix.data()[j+i*dim2];
+        //printf("i: %d, j: %d, w: %lu, x: %lu \n", i, j, weight_matrix.data()[j+i*dim2], X_sub_MArr[j]);
+      }
+      out_vec_share.data()[i] += offline_share.data()[i];
+    }
+    //printf("\nX-M: %lu, %lu, %lu\n", X_sub_MArr[0], X_sub_MArr[1], X_sub_MArr[2]);
+  }
+#ifdef LOG_LAYERWISE
+    auto temp = TIMER_TILL_NOW;
+    uint64_t curComm;
+    FIND_ALL_IO_TILL_NOW(curComm);
+    Matmul_sepOnlineTimeInMilliSec += temp;
+    Matmul_sepOnlineCommSent += curComm;
+#endif
 }
 
 void CheetahLinear::fc(const Tensor<uint64_t> &input_vector,
@@ -416,6 +603,404 @@ void CheetahLinear::fc(const Tensor<uint64_t> &input_vector,
   }
 }
 
+void CheetahLinear::conv_bias_relu_offline(const Tensor<uint64_t> &in_tensor,
+              const std::vector<Tensor<uint64_t>> &filters, int T,
+              const ConvMeta &meta, Tensor<uint64_t> &out_share0, Tensor<uint64_t> &out_share1,
+              int bitlength, int scale) const{
+#ifdef LOG_LAYERWISE
+    INIT_ALL_IO_DATA_SENT;
+    INIT_TIMER;
+#endif
+  setbuf(stdout,NULL);
+  //print_shape(in_tensor);
+  //print_shape(filters[0]);
+  if (!meta.ishape.IsSameSize(in_tensor.shape())) {
+    throw std::invalid_argument("CheetahLinear::conv_bias_relu meta.ishape mismatch");
+  }
+  if (meta.n_filters != filters.size()) {
+    throw std::invalid_argument("CheetahLinear::conv_bias_relu meta.n_filters mismatch");
+  }
+  for (const auto &f : filters) {
+    if (!meta.fshape.IsSameSize(f.shape())) {
+      throw std::invalid_argument("CheetahLinear::conv_bias_relu meta.fshape mismatch");
+    }
+  }
+  Code code;
+  if (party_ == sci::BOB) {
+    std::vector<seal::Serializable<seal::Ciphertext>> M_c;
+    code = conv2d_impl_.encryptImage(in_tensor, meta, M_c, nthreads_);// 将X0加密
+    if (code != Code:: OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu encryptImage " +
+                                 CodeMessage(code));
+    }
+    send_encrypted_vector(io_, M_c); // 发送[M]
+    std::vector<seal::Ciphertext> W_mul_M_sub_R0_c, W_mul_M_mul_T_sub_R1_c;
+    recv_encrypted_vector(io_, *context_, W_mul_M_sub_R0_c, true);
+    recv_encrypted_vector(io_, *context_, W_mul_M_mul_T_sub_R1_c, true);
+    // 解密获得W*X-R0
+    code = conv2d_impl_.decryptToTensor(W_mul_M_sub_R0_c, meta, out_share0, nthreads_);
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu decryptToTensor " +
+                               CodeMessage(code));
+    }
+    // 解密获得W*X*T-R1
+    code = conv2d_impl_.decryptToTensor(W_mul_M_mul_T_sub_R1_c, meta, out_share1, nthreads_);
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu decryptToTensor " +
+                               CodeMessage(code));
+    }
+  } else { // ALICE
+    std::vector<std::vector<seal::Plaintext>> encoded_filters;
+    code = conv2d_impl_.encodeFilters(filters, meta, encoded_filters, nthreads_);
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu ecnodeFilters " +
+                               CodeMessage(code));
+    }
+    std::vector<seal::Plaintext> zero_p;
+    code = conv2d_impl_.encodeImage(in_tensor, meta, zero_p, nthreads_);
+    std::vector<seal::Ciphertext> M_c;
+    recv_encrypted_vector(io_, *context_, M_c, false); // 接收[M]
+    std::vector<seal::Ciphertext> W_mul_M_sub_R0_c;
+    code = conv2d_impl_.conv2DSS(M_c, zero_p, encoded_filters, meta, 
+                                  W_mul_M_sub_R0_c, out_share0, nthreads_); // out_ct存放[W*M]
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu conv2DSS: " +
+                               CodeMessage(code));
+    }
+
+    // 将filters乘上T倍，这样就能得到W*T，T应为一个随机数，此处先取为2
+    TensorShape shape = filters[0].shape();
+    int C = shape.channels();
+    int H = shape.height();
+    int W = shape.width();
+    std::vector<Tensor<uint64_t>> scale_filters(filters.size());
+    for (auto &f : scale_filters) {
+      f.Reshape(shape);
+    }
+    for (int i = 0; i < filters.size(); i++) {
+      for (int c = 0; c < C; c++) {
+        for (int h = 0; h < H; h++) { 
+          for (int w = 0; w < W; w++) {
+            scale_filters.at(i)(c, h, w) = T * filters.at(i)(c, h, w);
+          }
+        }
+      }
+    }
+    std::vector<std::vector<seal::Plaintext>> scale_encoded_filters;
+    code = conv2d_impl_.encodeFilters(scale_filters, meta, scale_encoded_filters, nthreads_);
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu ecnodeFilters " +
+                               CodeMessage(code));
+    }        
+    std::vector<seal::Ciphertext> W_mul_M_mul_T_sub_R1_c;
+    code = conv2d_impl_.conv2DSS(M_c, zero_p, scale_encoded_filters, meta, 
+                                  W_mul_M_mul_T_sub_R1_c, out_share1, nthreads_); // out_ct存放[W*M]
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu conv2DSS: " +
+                               CodeMessage(code));
+    }
+    // 发送W_mul_M_c和W_mul_M_T_c
+    send_encrypted_vector(io_, W_mul_M_sub_R0_c);
+    send_encrypted_vector(io_, W_mul_M_mul_T_sub_R1_c);
+  }
+#ifdef LOG_LAYERWISE
+    auto temp = TIMER_TILL_NOW;
+    FusedBN_ReLUOfflineTimeInMilliSec += temp;
+    uint64_t curComm;
+    FIND_ALL_IO_TILL_NOW(curComm);
+    FusedBN_ReLUOfflineCommSent += curComm;
+#endif
+}
+
+void CheetahLinear::conv_bias_relu_online(const Tensor<uint64_t> &in_tensor,
+                const Tensor<uint64_t> &M, const std::vector<Tensor<uint64_t>> &filters, int T,
+                const ConvMeta &meta, Tensor<uint64_t> &offline_share0, 
+                Tensor<uint64_t> &offline_share1, uint64_t *bias, bool *B, uint64_t *result,
+                int bitlength, int scale) const {  
+#ifdef LOG_LAYERWISE
+    INIT_ALL_IO_DATA_SENT;
+    INIT_TIMER;
+#endif
+  //print_shape(in_tensor);
+  if (party_ == sci::BOB) {
+    // 将in_tensor解码获得数组X0，将M解码获得数组M
+    gemini::TensorShape shape = in_tensor.shape();
+    int C = shape.channels(), H = shape.height(), W = shape.width();
+    
+    uint64_t *X0_sub_MArr = new uint64_t[C * H * W];
+    // 发送X0-M到ALICE
+    int shape_len = C * H * W;
+    for (int i = 0; i < shape_len; i++) {
+      X0_sub_MArr[i] = (in_tensor.data()[i] - M.data()[i]);
+    }
+    io_->send_data(X0_sub_MArr, C * H * W * sizeof(uint64_t));
+    // 将offline_share1解码获得V，接收U=(W*(X-M)+b) * T + R1
+    gemini::TensorShape shape_out = offline_share1.shape();
+    int C_out = shape_out.channels(), H_out = shape_out.height(), W_out = shape_out.width();
+    uint64_t *UArr = new uint64_t[C_out * H_out * W_out];
+    uint64_t *U_add_V = new uint64_t[C_out * H_out * W_out];
+    io_->recv_data(UArr, C_out * H_out * W_out * sizeof(uint64_t));
+    // 计算U + V
+    int shape_out_len = C_out * H_out * W_out;
+    for (int i = 0; i < shape_out_len; i++) {
+    }
+    uint64_t mask_l = (1ULL << bitlength) - 1;
+    for (int i = 0; i < shape_out_len; i++) {
+      U_add_V[i] = (UArr[i] + offline_share1.data()[i]) & mask_l;
+    }
+    // 判断并发送B，返回结果
+    for (int i = 0; i < shape_out_len; i++) {
+      B[i] = ((U_add_V[i] >> (bitlength - 1)) & 1) ^ 1;
+    }
+    io_->send_bool(B, C_out * H_out * W_out);
+  } else { //ALICE
+    // 将in_tensor解码获得数组X1，将offline_share0解码获得R0，将offline_share1解码获得R1
+    gemini::TensorShape shape = in_tensor.shape();
+    int C = shape.channels(), H = shape.height(), W = shape.width();
+    int shape_len = C * H * W;
+    uint64_t *X0_sub_MArr = new uint64_t[C * H * W];
+    uint64_t *X_sub_MArr = new uint64_t[C * H * W];
+    // 将b扩展开来，b的长度为CO
+    int CO = meta.n_filters; // 每个filter对应一个
+    // 接收X0-M
+    io_->recv_data(X0_sub_MArr, C * H * W * sizeof(uint64_t));
+    // 计算X-M = X0-M + X1
+    gemini::Tensor<uint64_t> X_sub_MTen(meta.ishape);
+    
+    // auto eva_X_sub_M = [&](long wid, size_t start, size_t end) {
+      // for (int i = start; i < end; i++) {
+      for (int i = 0; i < shape_len; i++) { 
+        // X_sub_MArr[i] = (X0_sub_MArr[i] + X1Arr[i]);
+        X_sub_MTen.data()[i] = (X0_sub_MArr[i] + in_tensor.data()[i]);
+      }
+    //   return Code::OK;
+    // };
+    // gemini::ThreadPool tpool(nthreads_);
+    // LaunchWorks(tpool, shape_len, eva_X_sub_M);
+    // 计算<W*X>1 = W*(X-M) + b + R0（卷积计算）和 U=(W*(X-M)+b) * T + R1
+    gemini::Tensor<uint64_t> W_mul_XsbuM;
+    conv2d_impl_.idealFunctionality(X_sub_MTen, filters, meta, W_mul_XsbuM, nthreads_);
+    gemini::TensorShape shape_out = W_mul_XsbuM.shape();
+    int C_out = shape_out.channels(), H_out = shape_out.height(), W_out = shape_out.width();
+    int shape_out_len = C_out * H_out * W_out;
+    uint64_t *UArr = new uint64_t[shape_out_len];
+    // auto eva_result_U = [&](long wid, size_t start, size_t end) {
+      // for (int i = 0; i < shape_out_len; i++) {
+      for (int i = 0; i < shape_out_len; i++) { 
+        // 计算<W*X>1 = W*(X-M) + b + R0（卷积计算）
+        result[i] = W_mul_XsbuM.data()[i] + bias[i/(H_out*W_out)] + offline_share0.data()[i];
+        // 计算U=(W*(X-M)+b) * T + R1
+        UArr[i] = T * (W_mul_XsbuM.data()[i] + bias[i/(H_out*W_out)]) + offline_share1.data()[i];
+      }
+    //   return Code::OK;
+    // };
+    // LaunchWorks(tpool, shape_len, eva_result_U);
+    // 发送U
+    io_->send_data(UArr, C_out*H_out*W_out*sizeof(uint64_t));
+    // 接收B
+    io_->recv_bool(B, C_out * H_out * W_out);
+  }
+#ifdef LOG_LAYERWISE
+    auto temp = TIMER_TILL_NOW;
+    FusedBN_ReLUOnlineTimeInMilliSec += temp;
+    uint64_t curComm;
+    FIND_ALL_IO_TILL_NOW(curComm);
+    FusedBN_ReLUOnlineCommSent += curComm;
+#endif
+}
+
+void CheetahLinear::fc_get_random_zero_tensor(Tensor<uint64_t> &in_tensor, const FCMeta &meta, bool zero) const {
+  const int r = meta.input_shape.rows();
+  const int c = meta.input_shape.rows();
+  uint64_t *tmp = new uint64_t[r*c];
+  sci::PRG128 prg;
+  if (zero == false) {
+    prg.random_data(tmp, r * c * sizeof(uint64_t));
+  } else {
+    memset(tmp, 0, r * c * sizeof(uint64_t));
+  }
+  for (int i = 0; i < r; i++) {
+    for (int j = 0; j < c; j++) {
+      in_tensor(i, j) = tmp[i * c + j] & mask_r;
+      if (in_tensor(i, j) == 0) {
+        do {
+          prg.random_data(&tmp[i * c + j], sizeof(uint64_t));
+          in_tensor(i, j) = tmp[i * c + j] & mask_r;
+        } while(in_tensor(i, j) == 0);
+      }
+    }
+  }
+}
+
+void CheetahLinear::get_random_zero_tensor(Tensor<uint64_t> &in_tensor, const ConvMeta &meta, bool zero) const {
+  const int H = meta.ishape.height();
+  const int W = meta.ishape.width();
+  const int CI = meta.ishape.channels();
+  uint64_t *tmp = new uint64_t[H*W*CI];
+  sci::PRG128 prg;
+  if (zero == false) {
+    prg.random_data(tmp, H * W * CI * sizeof(uint64_t));
+  } else {
+    memset(tmp, 0, H*W*CI * sizeof(uint64_t));
+  }
+  for (int j = 0; j < H; j++) {
+      for (int k = 0; k < W; k++) {
+        for (int p = 0; p < CI; p++) {
+          in_tensor(p, j, k) = tmp[j*W + k*CI + p] & mask_r;
+          if (in_tensor(p, j, k) == 0) {// 避免产生随机数为0
+            do {
+                prg.random_data(&tmp[j*W + k*CI + p], sizeof(uint64_t));
+                in_tensor(p, j, k) = tmp[j*W + k*CI + p] & mask_r;
+            } while(in_tensor(p, j, k) == 0);
+          }
+        }
+      }
+    }
+}
+
+void CheetahLinear::conv2d_offline(const Tensor<uint64_t> &in_tensor,
+                           const std::vector<Tensor<uint64_t>> &filters,
+                           const ConvMeta &meta,Tensor<uint64_t> &out_tensor, bool BN) const {
+#ifdef LOG_LAYERWISE
+    INIT_ALL_IO_DATA_SENT;
+    INIT_TIMER;
+#endif
+  setbuf(stdout,NULL);
+  if (meta.n_filters != filters.size()) {
+    throw std::invalid_argument("CheetahLinear::conv_bias_relu meta.n_filters mismatch");
+  }
+  for (const auto &f : filters) {
+    if (!meta.fshape.IsSameSize(f.shape())) {
+      throw std::invalid_argument("CheetahLinear::conv_bias_relu meta.fshape mismatch");
+    }
+  }
+  Code code;
+  if (party_ == sci::BOB) {
+    // 将随机矩阵M加密，发送[M]给ALICE
+    std::vector<seal::Serializable<seal::Ciphertext>> M_c;
+    code = conv2d_impl_.encryptImage(in_tensor, meta, M_c, nthreads_);// 将X0加密
+    if (code != Code:: OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu encryptImage " +
+                                 CodeMessage(code));
+    }
+    send_encrypted_vector(io_, M_c); // 发送[M]
+    // 接收[W*M-R]，解密获得W*M-R作为输出<W*X>0
+    std::vector<seal::Ciphertext> W_mul_M_sub_R_c;
+    recv_encrypted_vector(io_, *context_, W_mul_M_sub_R_c);
+    code = conv2d_impl_.decryptToTensor(W_mul_M_sub_R_c, meta, out_tensor, nthreads_);
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu decryptToTensor " +
+                               CodeMessage(code));
+    }
+  } else {
+    // 接收[M]
+    std::vector<seal::Ciphertext> M_c;
+    recv_encrypted_vector(io_, *context_, M_c, false); // 接收[M]
+    // 计算[W*M-R]，将R作为输出
+    std::vector<std::vector<seal::Plaintext>> encoded_filters;
+    code = conv2d_impl_.encodeFilters(filters, meta, encoded_filters, nthreads_);
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu ecnodeFilters " +
+                               CodeMessage(code));
+    }
+    std::vector<seal::Plaintext> zero_p;
+    code = conv2d_impl_.encodeImage(in_tensor, meta, zero_p, nthreads_);
+    std::vector<seal::Ciphertext> W_mul_M_sub_R_c;
+    code = conv2d_impl_.conv2DSS(M_c, zero_p, encoded_filters, meta, 
+                                  W_mul_M_sub_R_c, out_tensor, nthreads_); // out_ct存放[W*M]
+    if (code != Code::OK) {
+      throw std::runtime_error("CheetahLinear::conv_bias_relu conv2DSS: " +
+                               CodeMessage(code));
+    }
+    // 发送[W*M-R]给BOB
+    send_encrypted_vector(io_, W_mul_M_sub_R_c);
+  }
+#ifdef LOG_LAYERWISE
+    auto temp = TIMER_TILL_NOW;
+    uint64_t curComm;
+    FIND_ALL_IO_TILL_NOW(curComm);
+if (BN == false) {
+    Conv_sepOfflineTimeInMilliSec += temp;
+    Conv_sepOfflineCommSent += curComm;
+} else {
+    BN_sepOfflineTimeInMilliSec += temp;
+    BN_sepOfflineCommSent += curComm;
+}
+#endif
+}
+
+void CheetahLinear::conv2d_online(const Tensor<uint64_t> &in_tensor,
+                const Tensor<uint64_t> &M, const std::vector<Tensor<uint64_t>> &filters,
+                const ConvMeta &meta, Tensor<uint64_t> &offline_share,
+                uint64_t *result, bool BN) const {
+#ifdef LOG_LAYERWISE
+    INIT_ALL_IO_DATA_SENT;
+    INIT_TIMER;
+#endif
+  if (!meta.ishape.IsSameSize(in_tensor.shape())) {
+    throw std::invalid_argument("CheetahLinear::conv_bias_relu meta.ishape mismatch");
+  }
+  if (party_ == sci::BOB) {
+    // 将in_tensor解码获得数组X0，将M解码获得数组M
+    gemini::TensorShape shape = in_tensor.shape();
+    int C = shape.channels(), H = shape.height(), W = shape.width();
+    uint64_t *X0_sub_MArr = new uint64_t[C * H * W];
+    int shape_len = C * H * W;
+    for (int i = 0; i < shape_len; i++) {
+      X0_sub_MArr[i] = in_tensor.data()[i] - M.data()[i];
+    }
+    // 发送X0-M
+    io_->send_data(X0_sub_MArr, C * H * W * sizeof(uint64_t));
+  } else {
+    // 将in_tensor解码获得数组X1，将offline_share0解码获得R
+    gemini::TensorShape shape = in_tensor.shape();
+    int C = shape.channels(), H = shape.height(), W = shape.width();
+    uint64_t *X0_sub_MArr = new uint64_t[C * H * W];
+    // 接收X0-M
+    io_->recv_data(X0_sub_MArr, C * H * W * sizeof(uint64_t));
+    
+    // 计算X-M
+
+    int shape_len = C * H * W;
+    gemini::Tensor<uint64_t> X_sub_MTen(meta.ishape);
+    for (int i = 0; i < shape_len; i++) { 
+      // X_sub_MArr[i] = (X0_sub_MArr[i] + X1Arr[i]);
+      X_sub_MTen.data()[i] = (X0_sub_MArr[i] + in_tensor.data()[i]);
+    }
+    // 计算W*(X-M)+R作为结果
+    gemini::Tensor<uint64_t> W_mul_XsbuM;
+    gemini::Tensor<uint64_t> W_mul_X1;
+    
+    conv2d_impl_.idealFunctionality(X_sub_MTen, filters, meta, W_mul_XsbuM, nthreads_);
+    gemini::TensorShape shape_out = W_mul_XsbuM.shape();
+    W_mul_X1.Reshape(shape_out);
+    int C_out = shape_out.channels(), H_out = shape_out.height(), W_out = shape_out.width();
+    int shape_out_len = C_out * H_out * W_out;
+
+    // auto eva_W_mul_X1 = [&](long wid, size_t start, size_t end) {
+      // for (int i = start; i < end; i++) {
+      for (int i = 0; i < shape_out_len; i++) {  
+        result[i] = W_mul_XsbuM.data()[i] + offline_share.data()[i];
+      }
+    //   return Code::OK;
+    // };
+    // LaunchWorks(tpool, shape_out_len, eva_W_mul_X1);
+  }
+  
+#ifdef LOG_LAYERWISE
+    auto temp = TIMER_TILL_NOW;
+    uint64_t curComm;
+    FIND_ALL_IO_TILL_NOW(curComm);
+if (BN == false) {
+    Conv_sepOnlineTimeInMilliSec += temp;
+    Conv_sepOnlineCommSent += curComm;
+} else {
+    BN_sepOnlineTimeInMilliSec += temp;
+    BN_sepOnlineCommSent += curComm;
+}
+#endif
+}
+
 void CheetahLinear::conv2d(const Tensor<uint64_t> &in_tensor,
                            const std::vector<Tensor<uint64_t>> &filters,
                            const ConvMeta &meta,
@@ -439,12 +1024,12 @@ void CheetahLinear::conv2d(const Tensor<uint64_t> &in_tensor,
   if (party_ == sci::BOB) {
     {
       std::vector<seal::Serializable<seal::Ciphertext>> ct_buff;
-      code = impl.encryptImage(in_tensor, meta, ct_buff, nthreads_);
+      code = impl.encryptImage(in_tensor, meta, ct_buff, nthreads_); // 将X0加密
       if (code != Code::OK) {
         throw std::runtime_error("CheetahLinear::conv2d encryptImage " +
                                  CodeMessage(code));
       }
-      send_encrypted_vector(io_, ct_buff);
+      send_encrypted_vector(io_, ct_buff); // 发送[X0]
     }
 
     // Wait for result
@@ -458,7 +1043,7 @@ void CheetahLinear::conv2d(const Tensor<uint64_t> &in_tensor,
     }
   } else {
     std::vector<std::vector<seal::Plaintext>> encoded_filters;
-    code = impl.encodeFilters(filters, meta, encoded_filters, nthreads_);
+    code = impl.encodeFilters(filters, meta, encoded_filters, nthreads_); // 将Filters进行编码，这个在BN中是？可以看看尺寸
     if (code != Code::OK) {
       throw std::runtime_error("CheetahLinear::conv2d ecnodeFilters " +
                                CodeMessage(code));
@@ -466,7 +1051,7 @@ void CheetahLinear::conv2d(const Tensor<uint64_t> &in_tensor,
 
     std::vector<seal::Plaintext> encoded_share;
     if (meta.is_shared_input) {
-      code = impl.encodeImage(in_tensor, meta, encoded_share, nthreads_);
+      code = impl.encodeImage(in_tensor, meta, encoded_share, nthreads_); // 编码X1
       if (code != Code::OK) {
         throw std::runtime_error("CheetahLinear::conv2d encodeImage " +
                                  CodeMessage(code));
@@ -474,11 +1059,11 @@ void CheetahLinear::conv2d(const Tensor<uint64_t> &in_tensor,
     }
 
     std::vector<seal::Ciphertext> ct_buff;
-    recv_encrypted_vector(io_, *context_, ct_buff, false);
+    recv_encrypted_vector(io_, *context_, ct_buff, false); // 接收[X0]
 
     std::vector<seal::Ciphertext> out_ct;
     auto code = impl.conv2DSS(ct_buff, encoded_share, encoded_filters, meta,
-                              out_ct, out_tensor, nthreads_);
+                              out_ct, out_tensor, nthreads_); // 计算[W * (X0 + X1) - R]放到out_ct中，输出R到out_tensor中
     if (code != Code::OK) {
       throw std::runtime_error("CheetahLinear::conv2d conv2DSS: " +
                                CodeMessage(code));
@@ -522,7 +1107,7 @@ void CheetahLinear::bn(const Tensor<uint64_t> &input_vector,
       throw std::runtime_error("bn decryptToVector [" + CodeMessage(code) +
                                "]");
     }
-  } else {
+  } else { // ALICE
     if (!scale_vector.shape().IsSameSize(meta.vec_shape)) {
       throw std::runtime_error("bn scale_vector shape mismatch");
     }
@@ -577,18 +1162,18 @@ void CheetahLinear::bn_direct(const Tensor<uint64_t> &input_tensor,
   if (party_ == sci::BOB) {
     {
       std::vector<seal::Serializable<seal::Ciphertext>> ct_buff;
-      code = bn_impl_.encryptTensor(input_tensor, meta, ct_buff, nthreads_);
+      code = bn_impl_.encryptTensor(input_tensor, meta, ct_buff, nthreads_); // 加密X0
       if (code != Code::OK) {
         throw std::runtime_error("bn_direct encryptVector [" +
                                  CodeMessage(code) + "]");
       }
-      send_encrypted_vector(io_, ct_buff);
+      send_encrypted_vector(io_, ct_buff); // 发送[X0]
     }
 
     std::vector<seal::Ciphertext> ct_buff;
-    recv_encrypted_vector(io_, *context_, ct_buff);
+    recv_encrypted_vector(io_, *context_, ct_buff); // 接收[scale*X-R]
 
-    code = bn_impl_.decryptToTensor(ct_buff, meta, out_tensor, nthreads_);
+    code = bn_impl_.decryptToTensor(ct_buff, meta, out_tensor, nthreads_); // 解密放到out_tensor中
     if (code != Code::OK) {
       throw std::runtime_error("bn_direct decryptToTensor [" +
                                CodeMessage(code) + "]");
@@ -602,7 +1187,7 @@ void CheetahLinear::bn_direct(const Tensor<uint64_t> &input_tensor,
     std::vector<seal::Plaintext> encoded_tensor;
     if (meta.is_shared_input) {
       code =
-          bn_impl_.encodeTensor(input_tensor, meta, encoded_tensor, nthreads_);
+          bn_impl_.encodeTensor(input_tensor, meta, encoded_tensor, nthreads_); // 编码X1
       if (code != Code::OK) {
         throw std::runtime_error("bn_direct encodeVector [" +
                                  CodeMessage(code) + "]");
@@ -610,7 +1195,7 @@ void CheetahLinear::bn_direct(const Tensor<uint64_t> &input_tensor,
     }
 
     std::vector<seal::Ciphertext> encrypted_tensor;
-    recv_encrypted_vector(io_, *context_, encrypted_tensor);
+    recv_encrypted_vector(io_, *context_, encrypted_tensor); // 接收[X0]
 
     std::vector<seal::Ciphertext> out_ct;
     code = bn_impl_.bn_direct(encrypted_tensor, encoded_tensor, scale_vector,
@@ -618,7 +1203,7 @@ void CheetahLinear::bn_direct(const Tensor<uint64_t> &input_tensor,
     if (code != Code::OK) {
       throw std::runtime_error("bn_direct failed [" + CodeMessage(code) + "]");
     }
-    send_encrypted_vector(io_, out_ct);
+    send_encrypted_vector(io_, out_ct); // 发送[scale*X-R]
   }
 }
 
@@ -651,4 +1236,61 @@ void recv_ciphertext(sci::NetIO *io, const seal::SEALContext &context,
     ct.load(context, is);
   }
   delete[] c_enc_result;
+}
+
+void decode_tensor(const gemini::Tensor<uint64_t> &in_tensor, uint64_t *out, int C, int H, int W, int bitlength) {
+  for (int i = 0; i < C; i++) {
+    for (int j = 0; j < H; j++) {
+      for (int k = 0; k < W; k++) {
+        out[i*H + j*W + k] = in_tensor(i, j, k);
+      }
+    }
+  }
+}
+
+void print_shape(const gemini::Tensor<uint64_t> &tensor) {
+  gemini::TensorShape shape = tensor.shape();
+  int C = shape.channels(), H = shape.height(), W = shape.width();
+  printf("tensor size :C=%d H=%d W=%d\n", C, H, W);
+}
+
+void print_tensor(const gemini::Tensor<uint64_t> &tensor) {
+  gemini::TensorShape shape = tensor.shape();
+  int C = shape.channels(), H = shape.height(), W = shape.width();
+  for (int i = 0; i < C; i++) {
+    for (int j = 0; j < H; j++) {
+      for (int k = 0; k < W; k++) {
+        printf("%d ", tensor(i, j, k));
+      }
+      printf("\n");
+    }
+  }
+}
+
+static Code LaunchWorks(
+    gemini::ThreadPool &tpool, size_t num_works,
+    std::function<Code(long wid, size_t start, size_t end)> program) {
+  if (num_works == 0) return Code::OK;
+  const long pool_sze = tpool.pool_size();
+  if (pool_sze <= 1L) {
+    return program(0, 0, num_works);
+  } else {
+    Code code;
+    std::vector<std::future<Code>> futures;
+    size_t work_load = (num_works + pool_sze - 1) / pool_sze;
+    for (long wid = 0; wid < pool_sze; ++wid) {
+      size_t start = wid * work_load;
+      size_t end = std::min(start + work_load, num_works);
+      futures.push_back(tpool.enqueue(program, wid, start, end));
+    }
+
+    code = Code::OK;
+    for (auto &&work : futures) {
+      Code c = work.get();
+      if (code == Code::OK && c != Code::OK) {
+        code = c;
+      }
+    }
+    return code;
+  }
 }

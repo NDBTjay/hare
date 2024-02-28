@@ -44,8 +44,27 @@ intType funcSSCons(int64_t x);
 void funcReconstruct2PCCons(signedIntType *y, const intType *x, int len);
 signedIntType funcReconstruct2PCCons(intType x, int revealParty);
 
+void MatMul2D_seperate(int32_t d0, int32_t d1, int32_t d2, const intType *mat_A,
+              const intType *mat_B, intType *mat_C, bool is_A_weight_matrix);
+
 void MatMul2D(int32_t s1, int32_t s2, int32_t s3, const intType *A,
               const intType *B, intType *C, bool modelIsA);
+
+void Conv_bias_ReLU(signedIntType N, signedIntType H, signedIntType W,
+                   signedIntType CI, signedIntType FH, signedIntType FW,
+                   signedIntType CO, signedIntType zPadHLeft,
+                   signedIntType zPadHRight, signedIntType zPadWLeft,
+                   signedIntType zPadWRight, signedIntType strideH,
+                   signedIntType strideW, intType *inputArr, intType *filterArr,
+                   intType *bias, intType *outArr, int bitlength, int scale);
+                   
+void Conv2DWrapper_seperate(signedIntType N, signedIntType H, signedIntType W,
+                   signedIntType CI, signedIntType FH, signedIntType FW,
+                   signedIntType CO, signedIntType zPadHLeft,
+                   signedIntType zPadHRight, signedIntType zPadWLeft,
+                   signedIntType zPadWRight, signedIntType strideH,
+                   signedIntType strideW, intType *inputArr, intType *filterArr,
+                   intType *outArr, bool BN=false);
 
 void Conv2DWrapper(signedIntType N, signedIntType H, signedIntType W,
                    signedIntType CI, signedIntType FH, signedIntType FW,
@@ -53,7 +72,7 @@ void Conv2DWrapper(signedIntType N, signedIntType H, signedIntType W,
                    signedIntType zPadHRight, signedIntType zPadWLeft,
                    signedIntType zPadWRight, signedIntType strideH,
                    signedIntType strideW, intType *inputArr, intType *filterArr,
-                   intType *outArr);
+                   intType *outArr, bool BN=false);
 
 void Conv2DGroupWrapper(signedIntType N, signedIntType H, signedIntType W,
                         signedIntType CI, signedIntType FH, signedIntType FW,

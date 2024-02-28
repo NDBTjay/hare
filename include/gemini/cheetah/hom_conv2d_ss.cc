@@ -975,7 +975,7 @@ Code HomConv2DSS::postProcessInplace(seal::Plaintext &pt,
 Code HomConv2DSS::idealFunctionality(
     const Tensor<uint64_t> &in_tensor,
     const std::vector<Tensor<uint64_t>> &filters, const Meta &meta,
-    Tensor<uint64_t> &out_tensor) const {
+    Tensor<uint64_t> &out_tensor, size_t nthreads) const {
   ENSURE_OR_RETURN(meta.ishape.IsSameSize(in_tensor.shape()),
                    Code::ERR_DIM_MISMATCH);
   ENSURE_OR_RETURN(meta.n_filters == filters.size(), Code::ERR_DIM_MISMATCH);
@@ -989,25 +989,28 @@ Code HomConv2DSS::idealFunctionality(
   out_tensor.Reshape(out_shape);
   const uint64_t base_mod = plain_modulus();
   ENSURE_OR_RETURN(base_mod != -1, Code::ERR_INTERNAL);
-
-  for (size_t m = 0; m < meta.n_filters; ++m) {
-    Tensor<uint64_t> one_channel;
-    if (base_mod > 1) {
-      // mod p
-      in_tensor.Conv2D(filters[m], meta.stride, meta.padding, one_channel,
-                       base_mod);
-    } else {
-      // mod 2^64
-      in_tensor.Conv2D(filters[m], meta.stride, meta.padding, one_channel);
+  auto ideal = [&](long wid, size_t start, size_t end) {
+    for (size_t m = start; m < end; ++m) {
+      Tensor<uint64_t> one_channel;
+      if (base_mod > 1) {
+        // mod p
+        in_tensor.Conv2D(filters[m], meta.stride, meta.padding, one_channel,
+                        base_mod);
+      } else {
+        // mod 2^64
+        in_tensor.Conv2D(filters[m], meta.stride, meta.padding, one_channel);
+      }
+      std::array<int64_t, 3> offset = {(int64_t)m, 0, 0};
+      std::array<int64_t, 3> extent{0};
+      for (int d : {0, 1, 2}) {
+        extent[d] = one_channel.dim_size(d);
+      }
+      out_tensor.tensor().slice(offset, extent) = one_channel.tensor();
     }
-    std::array<int64_t, 3> offset = {(int64_t)m, 0, 0};
-    std::array<int64_t, 3> extent{0};
-    for (int d : {0, 1, 2}) {
-      extent[d] = one_channel.dim_size(d);
-    }
-    out_tensor.tensor().slice(offset, extent) = one_channel.tensor();
-  }
-
+    return Code::OK;
+  };
+  ThreadPool tpool(nthreads);
+  LaunchWorks(tpool, meta.n_filters, ideal);
   return Code::OK;
 }
 

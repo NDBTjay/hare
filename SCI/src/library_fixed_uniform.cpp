@@ -29,7 +29,7 @@ SOFTWARE.
 #define LOG_LAYERWISE
 #define VERIFY_LAYERWISE
 #undef VERIFY_LAYERWISE // undefine this to turn OFF the verifcation
-// #undef LOG_LAYERWISE // undefine this to turn OFF the log
+//#undef LOG_LAYERWISE // undefine this to turn OFF the log
 
 #ifdef SCI_HE
 uint64_t prime_mod = sci::default_prime_mod.at(41);
@@ -47,8 +47,8 @@ void MatMul2D(int32_t s1, int32_t s2, int32_t s3, const intType *A,
   INIT_TIMER;
 #endif
 
-  std::cout << "Matmul called s1,s2,s3 = " << s1 << " " << s2 << " " << s3
-            << std::endl;
+  // std::cout << "Matmul called s1,s2,s3 = " << s1 << " " << s2 << " " << s3
+  //           << std::endl;
 
   // By default, the model is A and server/Alice has it
   // So, in the AB mult, party with A = server and party with B = client.
@@ -193,8 +193,10 @@ void MatMul2D(int32_t s1, int32_t s2, int32_t s3, const intType *A,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   MatMulTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current matmul = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   MatMulCommSent += curComm;
@@ -306,7 +308,7 @@ void Conv2DWrapper(signedIntType N, signedIntType H, signedIntType W,
                    signedIntType zPadHRight, signedIntType zPadWLeft,
                    signedIntType zPadWRight, signedIntType strideH,
                    signedIntType strideW, intType *inputArr, intType *filterArr,
-                   intType *outArr) {
+                   intType *outArr, bool BN) {
 #ifdef LOG_LAYERWISE
   INIT_ALL_IO_DATA_SENT;
   INIT_TIMER;
@@ -385,12 +387,22 @@ void Conv2DWrapper(signedIntType N, signedIntType H, signedIntType W,
 
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
+if (BN == false) {
   ConvTimeInMilliSec += temp;
+} else {
+  BNTimeInMilliSec += temp;
+}
+#ifndef NO_PRINT
   std::cout << "Time in sec for current conv = " << (temp / 1000.0)
             << std::endl;
+#endif            
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
+if (BN == false) {
   ConvCommSent += curComm;
+} else {
+  BNCommSent += curComm;
+}
 #endif
 
 #ifdef VERIFY_LAYERWISE
@@ -529,8 +541,10 @@ void Conv2DGroupWrapper(signedIntType N, signedIntType H, signedIntType W,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   ConvTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current conv = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   ConvCommSent += curComm;
@@ -626,9 +640,11 @@ void ElemWiseActModelVectorMult(int32_t size, intType *inArr,
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   BatchNormCommSent += curComm;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current BN = [" << (temp / 1000.0)
             << "] sent [" << (curComm / 1024. / 1024.) << "] MB"
             << std::endl;
+#endif
 #endif
 
 #ifdef VERIFY_LAYERWISE
@@ -753,7 +769,9 @@ void Relu(int32_t size, intType *inArr, intType *outArr, int sf, bool doTruncati
 #endif
 
   static int ctr = 1;
+#ifndef NO_PRINT
   printf("Relu #%d on %d points, truncate=%d by %d bits\n", ctr++, size, doTruncation, sf);
+#endif
   ctr++;
 
   intType moduloMask = sci::all1Mask(bitlength);
@@ -776,7 +794,11 @@ void Relu(int32_t size, intType *inArr, intType *outArr, int sf, bool doTruncati
     } else {
       lnum_relu = chunk_size;
     }
+    #if USE_HARE
+    relu_threads[i] = std::thread(funcReLUThread, i, tempOutp + offset, tempInp + offset, lnum_relu, nullptr, true); // 分别统计MaxPool和ReLU时间
+    #else
     relu_threads[i] = std::thread(funcReLUThread, i, tempOutp + offset, tempInp + offset, lnum_relu, nullptr, false);
+    #endif
   }
   for (int i = 0; i < num_threads; ++i) {
     relu_threads[i].join();
@@ -786,7 +808,9 @@ void Relu(int32_t size, intType *inArr, intType *outArr, int sf, bool doTruncati
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   ReluTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current relu = " << (temp / 1000.0) << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   ReluCommSent += curComm;
@@ -923,9 +947,11 @@ void MaxPool(int32_t N, int32_t H, int32_t W, int32_t C, int32_t ksizeH,
 #endif
 
   static int ctr = 1;
+#ifndef NO_PRINT
   std::cout << "Maxpool " << ctr << " called N=" << N << ", H=" << H
             << ", W=" << W << ", C=" << C << ", ksizeH=" << ksizeH
             << ", ksizeW=" << ksizeW << std::endl;
+#endif
   ctr++;
 
   uint64_t moduloMask = sci::all1Mask(bitlength);
@@ -1021,8 +1047,10 @@ void MaxPool(int32_t N, int32_t H, int32_t W, int32_t C, int32_t ksizeH,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   MaxpoolTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current maxpool = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   MaxpoolCommSent += curComm;
@@ -1112,11 +1140,12 @@ void AvgPool(int32_t N, int32_t H, int32_t W, int32_t C, int32_t ksizeH,
 #endif
 
   static int ctr = 1;
+#ifndef NO_PRINT
   std::cout << "AvgPool " << ctr << " called N=" << N << ", H=" << H
             << ", W=" << W << ", C=" << C << ", ksizeH=" << ksizeH
             << ", ksizeW=" << ksizeW << std::endl;
   ctr++;
-
+#endif
   uint64_t moduloMask = sci::all1Mask(bitlength);
   int rows = N * H * W * C;
   int rowsPadded = ((rows + 8 - 1) / 8) * 8;
@@ -1204,8 +1233,10 @@ void AvgPool(int32_t N, int32_t H, int32_t W, int32_t C, int32_t ksizeH,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   AvgpoolTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current avgpool = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   AvgpoolCommSent += curComm;
@@ -1288,8 +1319,9 @@ void ScaleDown(int32_t size, intType *inArr, int32_t sf) {
   INIT_TIMER;
 #endif
   static int ctr = 1;
+#ifndef NO_PRINT
   printf("Truncate #%d on %d points by %d bits\n", ctr++, size, sf);
-
+#endif
   int eightDivElemts = ((size + 8 - 1) / 8) * 8; //(ceil of s1*s2/8.0)*8
   intType *tempInp;
   if (size != eightDivElemts) {
@@ -1443,8 +1475,12 @@ void StartComputation() {
   truncation = new Truncation(party, io, otpack);
   multUniform = new MatMulUniform<sci::NetIO, intType, sci::IKNP<sci::NetIO>>(
       party, bitlength, io, iknpOT, iknpOTRoleReversed);
+#if USE_HARE
+  relu = new ReLUSsProtocol<sci::NetIO, intType>(party, io, bitlength, otpack);
+#else
   relu = new ReLURingProtocol<sci::NetIO, intType>(party, RING, io, bitlength,
                                                    MILL_PARAM, otpack);
+#endif
   maxpool = new MaxPoolProtocol<sci::NetIO, intType>(
       party, RING, io, bitlength, MILL_PARAM, 0, otpack, relu);
   argmax = new ArgMaxProtocol<sci::NetIO, intType>(party, RING, io, bitlength,
@@ -1462,6 +1498,9 @@ void StartComputation() {
   backend += "-SCI_OT";
 #endif
 
+#if USE_HARE
+  backend +="_USE_HARE";
+#endif
 
 #ifdef SCI_HE
   relu = new ReLUFieldProtocol<sci::NetIO, intType>(
@@ -1478,16 +1517,24 @@ void StartComputation() {
 #if defined MULTITHREADED_NONLIN && defined SCI_OT
   for (int i = 0; i < num_threads; i++) {
     if (i & 1) {
+#if USE_HARE
+      reluArr[i] = new ReLUSsProtocol<sci::NetIO, intType>(3 - party, ioArr[i], bitlength, otpackArr[i]);
+#else
       reluArr[i] = new ReLURingProtocol<sci::NetIO, intType>(
           3 - party, RING, ioArr[i], bitlength, MILL_PARAM, otpackArr[i]);
+#endif
       maxpoolArr[i] = new MaxPoolProtocol<sci::NetIO, intType>(
           3 - party, RING, ioArr[i], bitlength, MILL_PARAM, 0, otpackArr[i],
           reluArr[i]);
       multArr[i] = new LinearOT(3 - party, ioArr[i], otpackArr[i]);
       truncationArr[i] = new Truncation(3 - party, ioArr[i], otpackArr[i]);
     } else {
+#if USE_HARE
+      reluArr[i] = new ReLUSsProtocol<sci::NetIO, intType>(party, ioArr[i], bitlength, otpackArr[i]);
+#else
       reluArr[i] = new ReLURingProtocol<sci::NetIO, intType>(
           party, RING, ioArr[i], bitlength, MILL_PARAM, otpackArr[i]);
+#endif
       maxpoolArr[i] = new MaxPoolProtocol<sci::NetIO, intType>(
           party, RING, ioArr[i], bitlength, MILL_PARAM, 0, otpackArr[i],
           reluArr[i]);
@@ -1598,11 +1645,65 @@ void EndComputation() {
   std::cout << "------------------------------------------------------\n";
 
 #ifdef LOG_LAYERWISE
+  // ReluOfflineTimeInMilliSec /= num_threads; //由于每个线程都算了所有线程的总和，这里除以线程数
+  // ReluOnlineTimeInMilliSec /= num_threads;
+  // PoolOfflineTimeInMilliSec /= num_threads;
+  // PoolOnlineTimeInMilliSec /= num_threads;
+  // 离线时间
+  std::cout << "Total time in offline with seperate = " << ((Conv_sepOfflineTimeInMilliSec + BN_sepOfflineTimeInMilliSec +
+            FusedBN_ReLUOfflineTimeInMilliSec + ReluOfflineTimeInMilliSec) / 1000.0)
+            << " seconds." << std::endl;
+  // 离线与在线协议的在线时间
+  std::cout << "Total time in online with seperate = " << ((Conv_sepOnlineTimeInMilliSec + BN_sepOnlineTimeInMilliSec +
+            FusedBN_ReLUOnlineTimeInMilliSec + ReluOnlineTimeInMilliSec) / 1000.0)
+            << " seconds." << std::endl;
+  // 线性层，包括卷积、Matmul、BN
+  std::cout << "Total time in Linear = " << ((ConvTimeInMilliSec + BNTimeInMilliSec + Conv_sepTimeInMilliSec + BN_sepTimeInMilliSec +  MatMulTimeInMilliSec 
+            + BatchNormInMilliSec + FusedBN_ReLUTimeInMilliSec) / 1000.0)
+            << " seconds." << std::endl;
+  // 线性层离线
+  std::cout << "Total time in offline Linear = " << ((Conv_sepOfflineTimeInMilliSec + BN_sepOfflineTimeInMilliSec +
+            FusedBN_ReLUOfflineTimeInMilliSec) / 1000.0)
+            << " seconds." << std::endl;
+  // 非线性层，包括ReLU、Maxpool、Avgpool、Argmax
+  std::cout << "Total time in NonLinear = " << ((ReluTimeInMilliSec + MaxpoolTimeInMilliSec 
+            + AvgpoolTimeInMilliSec + ArgMaxTimeInMilliSec) / 1000.0)
+            << " seconds." << std::endl;
   std::cout << "Total time in Conv = " << (ConvTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Total time in Conv_sep = " << (Conv_sepTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Offline time in Conv_sep = " << (Conv_sepOfflineTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Online time in Conv_sep = " << (Conv_sepOnlineTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Total time in BN = " << (BNTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Total time in BN + relu = " << ((BNTimeInMilliSec + BN_sepTimeInMilliSec + ReluTimeInMilliSec) / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Total time in BN fused relu = " << ((BNTimeInMilliSec + BN_sepTimeInMilliSec + ReluTimeInMilliSec - BN_sepOnlineTimeInMilliSec - ReluOfflineTimeInMilliSec1) / 1000.0)
+            << " seconds." << std::endl;         
+  std::cout << "Total time in BN_sep = " << (BN_sepTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Offline time in BN_sep = " << (BN_sepOfflineTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Online time in BN_sep = " << (BN_sepOnlineTimeInMilliSec / 1000.0)
             << " seconds." << std::endl;
   std::cout << "Total time in MatMul = " << (MatMulTimeInMilliSec / 1000.0)
             << " seconds." << std::endl;
+  std::cout << "Total time in Matmul_sep = " << (Matmul_sepTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Offline time in Matmul_sep = " << (Matmul_sepOfflineTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Online time in Matmul_sep = " << (Matmul_sepOnlineTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
   std::cout << "Total time in BatchNorm = " << (BatchNormInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Total time in FusedBN_ReLU = " << (FusedBN_ReLUTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Offline time in FusedBN_ReLU = " << (FusedBN_ReLUOfflineTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;
+  std::cout << "Online time in FusedBN_ReLU = " << (FusedBN_ReLUOnlineTimeInMilliSec / 1000.0)
             << " seconds." << std::endl;
   std::cout << "Total time in Truncation = "
             << (TruncationTimeInMilliSec / 1000.0) << " seconds." << std::endl;
@@ -1610,76 +1711,135 @@ void EndComputation() {
             << " seconds." << std::endl;
   std::cout << "Total time in MaxPool = " << (MaxpoolTimeInMilliSec / 1000.0)
             << " seconds." << std::endl;
+  // std::cout << "Setup time in Relu = " << (ReluSetupTimeInMilliSec / 1000.0)
+  //           << " seconds." << std::endl;
+  std::cout << "Offline1 time in Relu = " << ((ReluOfflineTimeInMilliSec1) / 1000.0)
+            << " seconds." << std::endl;       
+  // std::cout << "Offline time in Relu = " << ((ReluOfflineTimeInMilliSec + ReluSetupTimeInMilliSec) / 1000.0)
+  //           << " seconds." << std::endl;
+  std::cout << "Offline time in Relu = " << ((ReluOfflineTimeInMilliSec) / 1000.0)
+            << " seconds." << std::endl;        
+  std::cout << "Online time in Relu = " << (ReluOnlineTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;   
+  std::cout << "Offline time in MaxPool = " << (PoolOfflineTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;        
+  std::cout << "Online time in MaxPool = " << (PoolOnlineTimeInMilliSec / 1000.0)
+            << " seconds." << std::endl;                 
   std::cout << "Total time in AvgPool = " << (AvgpoolTimeInMilliSec / 1000.0)
             << " seconds." << std::endl;
   std::cout << "Total time in ArgMax = " << (ArgMaxTimeInMilliSec / 1000.0)
             << " seconds." << std::endl;
-  std::cout << "Total time in MatAdd = " << (MatAddTimeInMilliSec / 1000.0)
-            << " seconds." << std::endl;
-  std::cout << "Total time in MatAddBroadCast = "
-            << (MatAddBroadCastTimeInMilliSec / 1000.0) << " seconds."
-            << std::endl;
-  std::cout << "Total time in MulCir = " << (MulCirTimeInMilliSec / 1000.0)
-            << " seconds." << std::endl;
-  std::cout << "Total time in ScalarMul = "
-            << (ScalarMulTimeInMilliSec / 1000.0) << " seconds." << std::endl;
-  std::cout << "Total time in Sigmoid = " << (SigmoidTimeInMilliSec / 1000.0)
-            << " seconds." << std::endl;
-  std::cout << "Total time in Tanh = " << (TanhTimeInMilliSec / 1000.0)
-            << " seconds." << std::endl;
-  std::cout << "Total time in Sqrt = " << (SqrtTimeInMilliSec / 1000.0)
-            << " seconds." << std::endl;
-  std::cout << "Total time in NormaliseL2 = "
-            << (NormaliseL2TimeInMilliSec / 1000.0) << " seconds." << std::endl;
-  std::cout << "------------------------------------------------------\n";
-  std::cout << "Conv data sent = " << ((ConvCommSent) / (1.0 * (1ULL << 20)))
-            << " MiB." << std::endl;
-  std::cout << "MatMul data sent = "
-            << ((MatMulCommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
-  std::cout << "BatchNorm data sent = "
-            << ((BatchNormCommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
-  std::cout << "Truncation data sent = "
-            << ((TruncationCommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
-  std::cout << "Relu data sent = " << ((ReluCommSent) / (1.0 * (1ULL << 20)))
-            << " MiB." << std::endl;
-  std::cout << "Maxpool data sent = "
-            << ((MaxpoolCommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
-  std::cout << "Avgpool data sent = "
-            << ((AvgpoolCommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
-  std::cout << "ArgMax data sent = "
-            << ((ArgMaxCommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
-  std::cout << "MatAdd data sent = "
-            << ((MatAddCommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
-  std::cout << "MatAddBroadCast data sent = "
-            << ((MatAddBroadCastCommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
-  std::cout << "MulCir data sent = "
-            << ((MulCirCommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
-  std::cout << "Sigmoid data sent = "
-            << ((SigmoidCommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
-  std::cout << "Tanh data sent = " << ((TanhCommSent) / (1.0 * (1ULL << 20)))
-            << " MiB." << std::endl;
-  std::cout << "Sqrt data sent = " << ((SqrtCommSent) / (1.0 * (1ULL << 20)))
-            << " MiB." << std::endl;
-  std::cout << "NormaliseL2 data sent = "
-            << ((NormaliseL2CommSent) / (1.0 * (1ULL << 20))) << " MiB."
-            << std::endl;
+  // std::cout << "Total time in MatAdd = " << (MatAddTimeInMilliSec / 1000.0)
+  //           << " seconds." << std::endl;
+  // std::cout << "Total time in MatAddBroadCast = "
+  //           << (MatAddBroadCastTimeInMilliSec / 1000.0) << " seconds."
+  //           << std::endl;
+  // std::cout << "Total time in MulCir = " << (MulCirTimeInMilliSec / 1000.0)
+  //           << " seconds." << std::endl;
+  // std::cout << "Total time in ScalarMul = "
+  //           << (ScalarMulTimeInMilliSec / 1000.0) << " seconds." << std::endl;
+  // std::cout << "Total time in Sigmoid = " << (SigmoidTimeInMilliSec / 1000.0)
+  //           << " seconds." << std::endl;
+  // std::cout << "Total time in Tanh = " << (TanhTimeInMilliSec / 1000.0)
+  //           << " seconds." << std::endl;
+  // std::cout << "Total time in Sqrt = " << (SqrtTimeInMilliSec / 1000.0)
+  //           << " seconds." << std::endl;
+  // std::cout << "Total time in NormaliseL2 = "
+  //           << (NormaliseL2TimeInMilliSec / 1000.0) << " seconds." << std::endl;
+  // std::cout << "------------------------------------------------------\n";
+  // // 线性层，包括卷积、Matmul、BN
+  // std::cout << "Linear data sent = " << ((ConvCommSent + Conv_sepCommSent + MatMulCommSent 
+  //           + BatchNormCommSent + FusedBN_ReLUCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // // 非线性层，包括ReLU、Maxpool、Avgpool、Argmax
+  // std::cout << "NonLinear data sent = " << ((ReluCommSent + MaxpoolCommSent 
+  //           + AvgpoolCommSent + ArgMaxCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "Conv data sent = " << ((ConvCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "Conv_sep data sent = " << ((Conv_sepCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "Conv_sep Offline data sent = " << ((Conv_sepOfflineCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "Conv_sep Online data sent = " << ((Conv_sepOnlineCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "MatMul data sent = "
+  //           << ((MatMulCommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
+  // std::cout << "BatchNorm data sent = "
+  //           << ((BatchNormCommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
+  // std::cout << "FusedBN_ReLU data sent = " << ((FusedBN_ReLUCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "FusedBN_ReLU Offline data sent = " << ((FusedBN_ReLUOfflineCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "FusedBN_ReLU Online data sent = " << ((FusedBN_ReLUOnlineCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "Truncation data sent = "
+  //           << ((TruncationCommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
+  // std::cout << "Relu data sent = " << ((ReluCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "Maxpool data sent = "
+  //           << ((MaxpoolCommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
+  // std::cout << "Relu Setup data sent = " << ((ReluSetupCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "Relu and MaxPool Offline data sent = " << ((ReluOfflineCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "Relu and MaxPool Online data sent = " << ((ReluOnlineCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "Avgpool data sent = "
+  //           << ((AvgpoolCommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
+  // std::cout << "ArgMax data sent = "
+  //           << ((ArgMaxCommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
+  // std::cout << "MatAdd data sent = "
+  //           << ((MatAddCommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
+  // std::cout << "MatAddBroadCast data sent = "
+  //           << ((MatAddBroadCastCommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
+  // std::cout << "MulCir data sent = "
+  //           << ((MulCirCommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
+  // std::cout << "Sigmoid data sent = "
+  //           << ((SigmoidCommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
+  // std::cout << "Tanh data sent = " << ((TanhCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "Sqrt data sent = " << ((SqrtCommSent) / (1.0 * (1ULL << 20)))
+  //           << " MiB." << std::endl;
+  // std::cout << "NormaliseL2 data sent = "
+  //           << ((NormaliseL2CommSent) / (1.0 * (1ULL << 20))) << " MiB."
+  //           << std::endl;
   std::cout << "------------------------------------------------------\n";
   if (party == SERVER) {
     uint64_t ConvCommSentClient = 0;
+    uint64_t Conv_sepCommSentClient = 0;
+    uint64_t Conv_sepOfflineCommSentClient = 0;
+    uint64_t Conv_sepOnlineCommSentClient = 0;
+    uint64_t Matmul_sepCommSentClient = 0;
+    uint64_t Matmul_sepOfflineCommSentClient = 0;
+    uint64_t Matmul_sepOnlineCommSentClient = 0;
+    uint64_t BNCommSentClient = 0;
+    uint64_t BN_sepCommSentClient = 0;
+    uint64_t BN_sepOfflineCommSentClient = 0;
+    uint64_t BN_sepOnlineCommSentClient = 0;
     uint64_t MatMulCommSentClient = 0;
     uint64_t BatchNormCommSentClient = 0;
+    uint64_t FusedBN_ReLUCommSentClient = 0;
+    uint64_t FusedBN_ReLUOfflineCommSentClient = 0;
+    uint64_t FusedBN_ReLUOnlineCommSentClient = 0;
     uint64_t TruncationCommSentClient = 0;
     uint64_t ReluCommSentClient = 0;
+    uint64_t ReluSetupCommSentClient = 0;
+    uint64_t ReluOfflineCommSentClient1 = 0;
+    uint64_t ReluOfflineCommSentClient = 0;
+    uint64_t ReluOnlineCommSentClient = 0;
+    uint64_t PoolOfflineCommSentClient = 0;
+    uint64_t PoolOnlineCommSentClient = 0;
     uint64_t MaxpoolCommSentClient = 0;
     uint64_t AvgpoolCommSentClient = 0;
     uint64_t ArgMaxCommSentClient = 0;
@@ -1693,10 +1853,29 @@ void EndComputation() {
     uint64_t NormaliseL2CommSentClient = 0;
 
     io->recv_data(&ConvCommSentClient, sizeof(uint64_t));
+    io->recv_data(&Conv_sepCommSentClient, sizeof(uint64_t));
+    io->recv_data(&Conv_sepOfflineCommSentClient, sizeof(uint64_t));
+    io->recv_data(&Conv_sepOnlineCommSentClient, sizeof(uint64_t));
+    io->recv_data(&Matmul_sepCommSentClient, sizeof(uint64_t));
+    io->recv_data(&Matmul_sepOfflineCommSentClient, sizeof(uint64_t));
+    io->recv_data(&Matmul_sepOnlineCommSentClient, sizeof(uint64_t));
+    io->recv_data(&BNCommSentClient, sizeof(uint64_t));
+    io->recv_data(&BN_sepCommSentClient, sizeof(uint64_t));
+    io->recv_data(&BN_sepOfflineCommSentClient, sizeof(uint64_t));
+    io->recv_data(&BN_sepOnlineCommSentClient, sizeof(uint64_t));
     io->recv_data(&MatMulCommSentClient, sizeof(uint64_t));
     io->recv_data(&BatchNormCommSentClient, sizeof(uint64_t));
+    io->recv_data(&FusedBN_ReLUCommSentClient, sizeof(uint64_t));
+    io->recv_data(&FusedBN_ReLUOfflineCommSentClient, sizeof(uint64_t));
+    io->recv_data(&FusedBN_ReLUOnlineCommSentClient, sizeof(uint64_t));
     io->recv_data(&TruncationCommSentClient, sizeof(uint64_t));
     io->recv_data(&ReluCommSentClient, sizeof(uint64_t));
+    io->recv_data(&ReluSetupCommSentClient, sizeof(uint64_t));
+    io->recv_data(&ReluOfflineCommSentClient1, sizeof(uint64_t));
+    io->recv_data(&ReluOfflineCommSentClient, sizeof(uint64_t));
+    io->recv_data(&ReluOnlineCommSentClient, sizeof(uint64_t));
+    io->recv_data(&PoolOfflineCommSentClient, sizeof(uint64_t));
+    io->recv_data(&PoolOnlineCommSentClient, sizeof(uint64_t));
     io->recv_data(&MaxpoolCommSentClient, sizeof(uint64_t));
     io->recv_data(&AvgpoolCommSentClient, sizeof(uint64_t));
     io->recv_data(&ArgMaxCommSentClient, sizeof(uint64_t));
@@ -1709,16 +1888,84 @@ void EndComputation() {
     io->recv_data(&SqrtCommSentClient, sizeof(uint64_t));
     io->recv_data(&NormaliseL2CommSentClient, sizeof(uint64_t));
 
+    // 离线通信量
+    std::cout << "offline with seperate data (sent+received) = " << ((Conv_sepOfflineCommSent + BN_sepOfflineCommSent + FusedBN_ReLUOfflineCommSent + ReluOfflineCommSent + PoolOfflineCommSent
+              + Conv_sepOfflineCommSentClient + BN_sepOfflineCommSentClient + FusedBN_ReLUOfflineCommSentClient + ReluOfflineCommSentClient + PoolOfflineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    // 对应的在线通信量
+    std::cout << "online with seperate data (sent+received) = " << ((Conv_sepOnlineCommSent + BN_sepOnlineCommSent + FusedBN_ReLUOnlineCommSent + ReluOnlineCommSent
+              + Conv_sepOnlineCommSentClient + BN_sepOnlineCommSentClient + FusedBN_ReLUOnlineCommSentClient + ReluOnlineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    // 线性层，包括卷积、Matmul、BN
+    std::cout << "Linear data (sent+received) = " << ((ConvCommSent + BNCommSent + Conv_sepOnlineCommSent + Conv_sepOfflineCommSent + BN_sepOnlineCommSent + BN_sepOfflineCommSent + MatMulCommSent 
+              + BatchNormCommSent + FusedBN_ReLUCommSent + ConvCommSentClient + BNCommSentClient + Conv_sepOnlineCommSentClient + Conv_sepOfflineCommSentClient + BN_sepOnlineCommSentClient + BN_sepOfflineCommSentClient + MatMulCommSentClient 
+              + BatchNormCommSentClient + FusedBN_ReLUCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    // 线性层离线
+    std::cout << "Linear offline data (sent+received) = " << ((Conv_sepOfflineCommSent + BN_sepOfflineCommSent + FusedBN_ReLUOfflineCommSent 
+              + Conv_sepOfflineCommSentClient + BN_sepOfflineCommSentClient + FusedBN_ReLUOfflineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    // 非线性层，包括ReLU、Maxpool、Avgpool、Argmax
+    std::cout << "NonLinear data (sent+received) = " << ((ReluCommSent + MaxpoolCommSent 
+              + AvgpoolCommSent + ArgMaxCommSent + ReluCommSentClient + MaxpoolCommSentClient 
+              + AvgpoolCommSentClient + ArgMaxCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
     std::cout << "Conv data (sent+received) = "
               << ((ConvCommSent + ConvCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "Conv_sep data (sent+received) = "
+              << ((Conv_sepCommSent + Conv_sepCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "Conv_sep offline data (sent+received) = "
+              << ((Conv_sepOfflineCommSent + Conv_sepOfflineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "Conv_sep online data (sent+received) = "
+              << ((Conv_sepOnlineCommSent + Conv_sepOnlineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "BN data (sent+received) = "
+              << ((BNCommSent + BNCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "BN + relu data (sent+received) = "
+              << ((BN_sepCommSent + BN_sepCommSentClient + ReluCommSent + ReluCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;  
+    std::cout << "BN fused relu data (sent+received) = "
+              << ((BN_sepCommSent + BN_sepCommSentClient + ReluCommSent + ReluCommSentClient - 
+              BN_sepOnlineCommSent - BN_sepOnlineCommSentClient - ReluOfflineCommSent1 - ReluOfflineCommSentClient1) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;          
+    std::cout << "BN_sep data (sent+received) = "
+              << ((BN_sepCommSent + BN_sepCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "BN_sep offline data (sent+received) = "
+              << ((BN_sepOfflineCommSent + BN_sepOfflineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "BN_sep online data (sent+received) = "
+              << ((BN_sepOnlineCommSent + BN_sepOnlineCommSentClient) / (1.0 * (1ULL << 20)))
               << " MiB." << std::endl;
     std::cout << "MatMul data (sent+received) = "
               << ((MatMulCommSent + MatMulCommSentClient) /
                   (1.0 * (1ULL << 20)))
               << " MiB." << std::endl;
+    std::cout << "Matmul_sep data (sent+received) = "
+              << ((Matmul_sepCommSent + Matmul_sepCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "Matmul_sep offline data (sent+received) = "
+              << ((Matmul_sepOfflineCommSent + Matmul_sepOfflineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "Matmul_sep online data (sent+received) = "
+              << ((Matmul_sepOnlineCommSent + Matmul_sepOnlineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
     std::cout << "BatchNorm data (sent+received) = "
               << ((BatchNormCommSent + BatchNormCommSentClient) /
                   (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "FusedBN_ReLU data (sent+received) = "
+              << ((FusedBN_ReLUCommSent + FusedBN_ReLUCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "FusedBN_ReLU offline data (sent+received) = "
+              << ((FusedBN_ReLUOfflineCommSent + FusedBN_ReLUOfflineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "FusedBN_ReLU online data (sent+received) = "
+              << ((FusedBN_ReLUOnlineCommSent + FusedBN_ReLUOnlineCommSentClient) / (1.0 * (1ULL << 20)))
               << " MiB." << std::endl;
     std::cout << "Truncation data (sent+received) = "
               << ((TruncationCommSent + TruncationCommSentClient) /
@@ -1731,6 +1978,27 @@ void EndComputation() {
               << ((MaxpoolCommSent + MaxpoolCommSentClient) /
                   (1.0 * (1ULL << 20)))
               << " MiB." << std::endl;
+    // std::cout << "Relu Setup data (sent+received) = "
+    //           << ((ReluSetupCommSent + ReluSetupCommSentClient) / (1.0 * (1ULL << 20)))
+    //           << " MiB." << std::endl;
+    std::cout << "Relu offline1 data (sent+received) = "
+              << ((ReluOfflineCommSent1 + ReluOfflineCommSentClient1) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    // std::cout << "Relu offline data (sent+received) = "
+    //           << ((ReluOfflineCommSent + ReluOfflineCommSentClient + ReluSetupCommSent + ReluSetupCommSentClient) / (1.0 * (1ULL << 20)))
+    //           << " MiB." << std::endl;
+    std::cout << "Relu offline data (sent+received) = "
+              << ((ReluOfflineCommSent + ReluOfflineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "Relu online data (sent+received) = "
+              << ((ReluOnlineCommSent + ReluOnlineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "MaxPool offline data (sent+received) = "
+              << ((PoolOfflineCommSent + PoolOfflineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
+    std::cout << "MaxPool online data (sent+received) = "
+              << ((PoolOnlineCommSent + PoolOnlineCommSentClient) / (1.0 * (1ULL << 20)))
+              << " MiB." << std::endl;
     std::cout << "Avgpool data (sent+received) = "
               << ((AvgpoolCommSent + AvgpoolCommSentClient) /
                   (1.0 * (1ULL << 20)))
@@ -1739,36 +2007,36 @@ void EndComputation() {
               << ((ArgMaxCommSent + ArgMaxCommSentClient) /
                   (1.0 * (1ULL << 20)))
               << " MiB." << std::endl;
-    std::cout << "MatAdd data (sent+received) = "
-              << ((MatAddCommSent + MatAddCommSentClient) /
-                  (1.0 * (1ULL << 20)))
-              << " MiB." << std::endl;
-    std::cout << "MatAddBroadCast data (sent+received) = "
-              << ((MatAddBroadCastCommSent + MatAddBroadCastCommSentClient) /
-                  (1.0 * (1ULL << 20)))
-              << " MiB." << std::endl;
-    std::cout << "MulCir data (sent+received) = "
-              << ((MulCirCommSent + MulCirCommSentClient) /
-                  (1.0 * (1ULL << 20)))
-              << " MiB." << std::endl;
-    std::cout << "ScalarMul data (sent+received) = "
-              << ((ScalarMulCommSent + ScalarMulCommSentClient) /
-                  (1.0 * (1ULL << 20)))
-              << " MiB." << std::endl;
-    std::cout << "Sigmoid data (sent+received) = "
-              << ((SigmoidCommSent + SigmoidCommSentClient) /
-                  (1.0 * (1ULL << 20)))
-              << " MiB." << std::endl;
-    std::cout << "Tanh data (sent+received) = "
-              << ((TanhCommSent + TanhCommSentClient) / (1.0 * (1ULL << 20)))
-              << " MiB." << std::endl;
-    std::cout << "Sqrt data (sent+received) = "
-              << ((SqrtCommSent + SqrtCommSentClient) / (1.0 * (1ULL << 20)))
-              << " MiB." << std::endl;
-    std::cout << "NormaliseL2 data (sent+received) = "
-              << ((NormaliseL2CommSent + NormaliseL2CommSentClient) /
-                  (1.0 * (1ULL << 20)))
-              << " MiB." << std::endl;
+    // std::cout << "MatAdd data (sent+received) = "
+    //           << ((MatAddCommSent + MatAddCommSentClient) /
+    //               (1.0 * (1ULL << 20)))
+    //           << " MiB." << std::endl;
+    // std::cout << "MatAddBroadCast data (sent+received) = "
+    //           << ((MatAddBroadCastCommSent + MatAddBroadCastCommSentClient) /
+    //               (1.0 * (1ULL << 20)))
+    //           << " MiB." << std::endl;
+    // std::cout << "MulCir data (sent+received) = "
+    //           << ((MulCirCommSent + MulCirCommSentClient) /
+    //               (1.0 * (1ULL << 20)))
+    //           << " MiB." << std::endl;
+    // std::cout << "ScalarMul data (sent+received) = "
+    //           << ((ScalarMulCommSent + ScalarMulCommSentClient) /
+    //               (1.0 * (1ULL << 20)))
+    //           << " MiB." << std::endl;
+    // std::cout << "Sigmoid data (sent+received) = "
+    //           << ((SigmoidCommSent + SigmoidCommSentClient) /
+    //               (1.0 * (1ULL << 20)))
+    //           << " MiB." << std::endl;
+    // std::cout << "Tanh data (sent+received) = "
+    //           << ((TanhCommSent + TanhCommSentClient) / (1.0 * (1ULL << 20)))
+    //           << " MiB." << std::endl;
+    // std::cout << "Sqrt data (sent+received) = "
+    //           << ((SqrtCommSent + SqrtCommSentClient) / (1.0 * (1ULL << 20)))
+    //           << " MiB." << std::endl;
+    // std::cout << "NormaliseL2 data (sent+received) = "
+    //           << ((NormaliseL2CommSent + NormaliseL2CommSentClient) /
+    //               (1.0 * (1ULL << 20)))
+    //           << " MiB." << std::endl;
 
 #ifdef WRITE_LOG
     std::string file_addr = "results-Porthos2PC-server.csv";
@@ -1803,7 +2071,13 @@ void EndComputation() {
            << (TruncationCommSent + TruncationCommSentClient) /
                   (1.0 * (1ULL << 20))
            << "," << ReluTimeInMilliSec / 1000.0 << ","
+           << ReluSetupTimeInMilliSec / 1000.0 << ","
+           << ReluOfflineTimeInMilliSec / 1000.0 << ","
+           << ReluOnlineTimeInMilliSec / 1000.0 << ","
            << (ReluCommSent + ReluCommSentClient) / (1.0 * (1ULL << 20)) << ","
+           << (ReluSetupCommSent + ReluSetupCommSentClient) / (1.0 * (1ULL << 20)) << ","
+           << (ReluOfflineCommSent + ReluOfflineCommSentClient) / (1.0 * (1ULL << 20)) << ","
+           << (ReluOnlineCommSent + ReluOnlineCommSentClient) / (1.0 * (1ULL << 20)) << ","
            << MaxpoolTimeInMilliSec / 1000.0 << ","
            << (MaxpoolCommSent + MaxpoolCommSentClient) / (1.0 * (1ULL << 20))
            << "," << AvgpoolTimeInMilliSec / 1000.0 << ","
@@ -1815,10 +2089,29 @@ void EndComputation() {
 #endif
   } else if (party == CLIENT) {
     io->send_data(&ConvCommSent, sizeof(uint64_t));
+    io->send_data(&Conv_sepCommSent, sizeof(uint64_t));
+    io->send_data(&Conv_sepOfflineCommSent, sizeof(uint64_t));
+    io->send_data(&Conv_sepOnlineCommSent, sizeof(uint64_t));
+    io->send_data(&Matmul_sepCommSent, sizeof(uint64_t));
+    io->send_data(&Matmul_sepOfflineCommSent, sizeof(uint64_t));
+    io->send_data(&Matmul_sepOnlineCommSent, sizeof(uint64_t));
+    io->send_data(&BNCommSent, sizeof(uint64_t));
+    io->send_data(&BN_sepCommSent, sizeof(uint64_t));
+    io->send_data(&BN_sepOfflineCommSent, sizeof(uint64_t));
+    io->send_data(&BN_sepOnlineCommSent, sizeof(uint64_t));
     io->send_data(&MatMulCommSent, sizeof(uint64_t));
     io->send_data(&BatchNormCommSent, sizeof(uint64_t));
+    io->send_data(&FusedBN_ReLUCommSent, sizeof(uint64_t));
+    io->send_data(&FusedBN_ReLUOfflineCommSent, sizeof(uint64_t));
+    io->send_data(&FusedBN_ReLUOnlineCommSent, sizeof(uint64_t));
     io->send_data(&TruncationCommSent, sizeof(uint64_t));
     io->send_data(&ReluCommSent, sizeof(uint64_t));
+    io->send_data(&ReluSetupCommSent, sizeof(uint64_t));
+    io->send_data(&ReluOfflineCommSent1, sizeof(uint64_t));
+    io->send_data(&ReluOfflineCommSent, sizeof(uint64_t));
+    io->send_data(&ReluOnlineCommSent, sizeof(uint64_t));
+    io->send_data(&PoolOfflineCommSent, sizeof(uint64_t));
+    io->send_data(&PoolOnlineCommSent, sizeof(uint64_t));
     io->send_data(&MaxpoolCommSent, sizeof(uint64_t));
     io->send_data(&AvgpoolCommSent, sizeof(uint64_t));
     io->send_data(&ArgMaxCommSent, sizeof(uint64_t));

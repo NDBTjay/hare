@@ -42,7 +42,13 @@ add_library(SCI-Cheetah library_fixed_uniform_cheetah.cpp library_fixed_uniform.
 target_link_libraries(SCI-Cheetah PUBLIC SCI-common Cheetah-Linear SCI-Cheetah-BuildingBlocks SCI-Math Eigen3::Eigen)
 target_compile_definitions(SCI-Cheetah PUBLIC SCI_OT=1 USE_CHEETAH=1)
 
+# hare releated
+add_library(SCI-hare library_fixed_uniform_cheetah.cpp library_fixed_uniform.cpp library_fixed.cpp globals.cpp cleartext_library_fixed.cpp)
+target_link_libraries(SCI-hare PUBLIC SCI-common Cheetah-Linear SCI-Cheetah-BuildingBlocks SCI-Math Eigen3::Eigen)
+target_compile_definitions(SCI-hare PUBLIC SCI_OT=1 USE_CHEETAH=1 USE_HARE=1)
+
 if (OPENMP_FOUND)
     target_link_libraries(SCI-HE PUBLIC OpenMP::OpenMP_CXX)
     target_link_libraries(SCI-Cheetah PUBLIC OpenMP::OpenMP_CXX)
+    target_link_libraries(SCI-hare PUBLIC OpenMP::OpenMP_CXX)
 endif()

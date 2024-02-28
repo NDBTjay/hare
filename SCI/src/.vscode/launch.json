@@ -1,0 +1,48 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "run Alice",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/home/ndbtjay/Desktop/PPC/hare_paper1/build/bin/resnet50_2-hare",
+            "args": ["r=1", "k=12", "ell=41", "nt=4", "ip=127.0.0.1", "p=12345", "<", 
+            "/home/ndbtjay/Desktop/PPC/hare_paper1/pretrained/resnet50_model_scale12.inp"],
+            "stopAtEntry": false,
+            "cwd": "/home/ndbtjay/Desktop/PPC/",
+            //"preLaunchTask": "let's make",
+            "MIMode": "gdb",
+            "console": "externalTerminal",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+        },
+        {
+            "name": "run Bob",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/home/ndbtjay/Desktop/PPC/hare_paper1/build/bin/resnet50_2-hare",
+            "args": ["r=2", "k=12", "ell=41", "nt=4", "ip=127.0.0.1", "p=12345", "<", 
+                     "/home/ndbtjay/Desktop/PPC/hare_paper1/pretrained/resnet50_input_scale12_pred249.inp"],
+            "stopAtEntry": false,
+            "cwd": "/home/ndbtjay/Desktop/PPC/",
+            "MIMode": "gdb",
+            "console": "externalTerminal",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+        },
+    ]
+    
+}

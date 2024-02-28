@@ -10,7 +10,7 @@
 
 #define VERIFY_LAYERWISE
 #define LOG _LAYERWISE
-//#undef VERIFY_LAYERWISE // undefine this to turn OFF the verifcation
+#undef VERIFY_LAYERWISE // undefine this to turn OFF the verifcation
 //#undef LOG_LAYERWISE // undefine this to turn OFF the log
 
 #ifndef SCI_OT
@@ -34,6 +34,104 @@ static inline uint64_t getRingElt(int64_t x) {
 #endif
 
 extern uint64_t SecretAdd(uint64_t x, uint64_t y);
+
+void get_zero_tensor_1d(gemini::Tensor<uint64_t> &in_tensor) {
+  gemini::TensorShape shape = in_tensor.shape();
+  int len = shape.length();
+  for (int i = 0; i < len; i++) {
+    in_tensor.data()[i] = 0;
+  }
+  return;
+}
+
+void get_random_tensor_1d(gemini::Tensor<uint64_t> &in_tensor, int bitlength) {
+  uint64_t mask_l = (uint64_t)((1ULL << bitlength) - 1);
+  uint64_t mask_r = (uint64_t)((1ULL << 5) - 1);
+  gemini::TensorShape shape = in_tensor.shape();
+  int len = shape.length();
+  uint64_t *tmp = new uint64_t[len];
+  sci::PRG128 prg;
+  prg.random_data(tmp, len * sizeof(uint64_t));
+
+  for (int i = 0; i < len; i++) {
+    in_tensor.data()[i] = tmp[i] & mask_r;
+    if (in_tensor.data()[i] == 0) {
+      do {
+        prg.random_data(&tmp[i], sizeof(uint64_t));
+        in_tensor.data()[i] = tmp[i] & mask_r;
+      } while(in_tensor.data()[i] == 0);
+    }
+  }
+}
+
+void get_zero_tensor_2d(gemini::Tensor<uint64_t> &in_tensor) {
+  gemini::TensorShape shape = in_tensor.shape();
+  const int r = shape.rows();
+  const int c = shape.cols();
+  int len = r * c;
+  for (int i = 0; i < len; i++) {
+    in_tensor.data()[i] = 0;
+  }
+}
+
+void get_random_tensor_2d(gemini::Tensor<uint64_t> &in_tensor, int bitlength) {
+  uint64_t mask_l = (uint64_t)((1ULL << bitlength) - 1);
+  uint64_t mask_r = (uint64_t)((1ULL << 5) - 1);
+  gemini::TensorShape shape = in_tensor.shape();
+  const int r = shape.rows();
+  const int c = shape.cols();
+  uint64_t *tmp = new uint64_t[r*c];
+  sci::PRG128 prg;
+  prg.random_data(tmp, r * c * sizeof(uint64_t));
+
+  for (int i = 0; i < r; i++) {
+    for (int j = 0; j < c; j++) {
+      in_tensor(i, j) = tmp[i * c + j] & mask_r;
+      if (in_tensor(i, j) == 0) {
+        do {
+          prg.random_data(&tmp[i * c + j], sizeof(uint64_t));
+          in_tensor(i, j) = tmp[i * c + j] & mask_r;
+        } while(in_tensor(i, j) == 0);
+      }
+    }
+  }
+}
+
+void get_zero_tensor(gemini::Tensor<uint64_t> &in_tensor) {
+  gemini::TensorShape shape = in_tensor.shape();
+  int C = shape.channels(), H = shape.height(), W = shape.width();
+  int len = C * H * W;
+  for (int i = 0; i < len; i++) {
+    in_tensor.data()[i] = 0;
+  }
+}
+
+void get_random_tensor(gemini::Tensor<uint64_t> &in_tensor, int bitlength) {
+  uint64_t mask_l = (uint64_t)((1ULL << bitlength) - 1);
+  uint64_t mask_r = (uint64_t)((1ULL << 5) - 1);
+  gemini::TensorShape shape = in_tensor.shape();
+  int C = shape.channels(), H = shape.height(), W = shape.width();
+  uint64_t *tmp = new uint64_t[H*W*C];
+  sci::PRG128 prg;
+  printf("H:%d, W:%d, C:%d\n", H, W, C);
+  prg.random_data(tmp, C * H * W * sizeof(uint64_t));
+  // for (int i = 0; i < H*W*C; i++) {
+  //   tmp[i] = i+1;
+  // }
+  for (int i = 0; i < H; i++) {
+    for (int j = 0; j < W; j++) {
+      for (int k = 0; k < C; k++) {
+        in_tensor(k, i, j) = tmp[i*W*C + j*C + k] & mask_r;
+        if (in_tensor(k, i, j) == 0) {
+          do {
+            prg.random_data(&tmp[i*W*C + j*C + k], sizeof(uint64_t));
+            in_tensor(k, i, j) = tmp[i*W*C + j*C + k] & mask_r;
+          } while(in_tensor(k, i, j) == 0);
+        }
+      }
+    }
+  }
+}
 
 #ifdef LOG_LAYERWISE
 #include <vector>
@@ -61,6 +159,97 @@ extern void MatMul2DEigen_pt(int64_t i, int64_t j, int64_t k, uint64_2D &A,
 extern void ElemWiseActModelVectorMult_pt(uint64_t s1, uint64_1D &arr1,
                                           uint64_1D &arr2, uint64_1D &outArr);
 #endif
+
+void MatMul2D_seperate(int32_t d0, int32_t d1, int32_t d2, const intType *mat_A,
+              const intType *mat_B, intType *mat_C, bool is_A_weight_matrix) {
+#ifdef LOG_LAYERWISE
+  INIT_ALL_IO_DATA_SENT;
+  INIT_TIMER;
+#endif
+  using namespace gemini;
+  CheetahLinear::FCMeta meta;
+
+  TensorShape mat_A_shape({d0, d1});
+  TensorShape mat_B_shape({d1, d2});
+
+  TensorShape input_shape = is_A_weight_matrix ? mat_B_shape : mat_A_shape;
+  TensorShape weight_shape = is_A_weight_matrix ? mat_A_shape : mat_B_shape;
+  meta.input_shape = TensorShape({input_shape.dim_size(1)});
+  // Transpose
+  meta.weight_shape =
+      TensorShape({weight_shape.dim_size(1), weight_shape.dim_size(0)});
+  meta.is_shared_input = kIsSharedInput;
+
+  auto weight_mat = is_A_weight_matrix ? mat_A : mat_B;
+  auto input_mat = is_A_weight_matrix ? mat_B : mat_A;
+
+  Tensor<intType> weight_matrix;
+  if (cheetah_linear->party() == SERVER) {
+    // Transpose the weight matrix and convert the uint64_t to ring element
+    weight_matrix.Reshape(meta.weight_shape);
+    const size_t nrows = weight_shape.dim_size(0);
+    const size_t ncols = weight_shape.dim_size(1);
+    printf("nrows: %d, ncols: %d\n", nrows, ncols);
+    for (long r = 0; r < nrows; ++r) {
+      for (long c = 0; c < ncols; ++c) {
+        Arr2DIdxRowM(weight_matrix.data(), ncols, nrows, c, r) =
+            getRingElt(Arr2DIdxRowM(weight_mat, nrows, ncols, r, c)); // 倒序？
+      }
+    }
+    for (int i = 0; i < 2; i++) {
+      for (int j = 0; j < 3; j++) {
+        printf("%lu ", weight_matrix.data()[j*2+i]);
+      }
+    }
+    printf("\n");
+  }
+  for (long r = 0; r < input_shape.rows(); ++r) { // 逐行做矩阵向量积
+    // row-major
+    const intType *input_row = input_mat + r * input_shape.cols();
+
+    Tensor<intType> input_vector;
+    if (meta.is_shared_input) {
+      input_vector = Tensor<intType>::Wrap(const_cast<intType *>(input_row),
+                                           meta.input_shape);
+    } else {
+      input_vector.Reshape(meta.input_shape);
+      std::transform(input_row, input_row + meta.input_shape.num_elements(),
+                     input_vector.data(),
+                     [](uint64_t v) { return getRingElt(v); });
+    }
+
+    gemini::Tensor<uint64_t> out_vec(gemini::TensorShape({meta.weight_shape.dim_size(0)}));
+    //cheetah_linear->fc(input_vector, weight_matrix, meta, out_vec);
+    gemini::Tensor<uint64_t> M(meta.input_shape);
+    gemini::Tensor<uint64_t> offline_share(gemini::TensorShape({meta.weight_shape.dim_size(0)}));
+    if (party == CLIENT) { // CLIENT端选择M
+      get_random_tensor_1d(M, bitlength);
+    } else {
+      get_zero_tensor_1d(M);
+    }
+    
+    cheetah_linear->fc_offline(M, weight_matrix, meta, offline_share);
+    cheetah_linear->fc_online(input_vector, M, weight_matrix, meta, offline_share, out_vec);
+    
+    std::copy_n(out_vec.data(), out_vec.shape().num_elements(),
+              mat_C + r * input_shape.cols());
+  }
+  if (cheetah_linear->party() == SERVER) {
+    cheetah_linear->safe_erase(weight_matrix.data(),
+                               meta.weight_shape.num_elements());
+  }
+#ifdef LOG_LAYERWISE
+  auto temp = TIMER_TILL_NOW;
+  Matmul_sepTimeInMilliSec += temp;
+#ifndef NO_PRINT
+  std::cout << "Time in sec for current matmul = " << (temp / 1000.0)
+            << std::endl;
+#endif
+  uint64_t curComm;
+  FIND_ALL_IO_TILL_NOW(curComm);
+  Matmul_sepCommSent += curComm;
+#endif
+}
 
 void MatMul2D(int32_t d0, int32_t d1, int32_t d2, const intType *mat_A,
               const intType *mat_B, intType *mat_C, bool is_A_weight_matrix) {
@@ -95,12 +284,11 @@ void MatMul2D(int32_t d0, int32_t d1, int32_t d2, const intType *mat_A,
     for (long r = 0; r < nrows; ++r) {
       for (long c = 0; c < ncols; ++c) {
         Arr2DIdxRowM(weight_matrix.data(), ncols, nrows, c, r) =
-            getRingElt(Arr2DIdxRowM(weight_mat, nrows, ncols, r, c));
+            getRingElt(Arr2DIdxRowM(weight_mat, nrows, ncols, r, c)); // 倒序？
       }
     }
   }
-
-  for (long r = 0; r < input_shape.rows(); ++r) {
+  for (long r = 0; r < input_shape.rows(); ++r) { // 逐行做矩阵向量积
     // row-major
     const intType *input_row = input_mat + r * input_shape.cols();
 
@@ -128,8 +316,10 @@ void MatMul2D(int32_t d0, int32_t d1, int32_t d2, const intType *mat_A,
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
   MatMulTimeInMilliSec += temp;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current matmul = " << (temp / 1000.0)
             << std::endl;
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   MatMulCommSent += curComm;
@@ -208,18 +398,143 @@ void MatMul2D(int32_t d0, int32_t d1, int32_t d2, const intType *mat_A,
 #endif
 }
 
-void Conv2DWrapper(signedIntType N, signedIntType H, signedIntType W,
+void Conv_bias_ReLU(signedIntType N, signedIntType H, signedIntType W,
                    signedIntType CI, signedIntType FH, signedIntType FW,
                    signedIntType CO, signedIntType zPadHLeft,
                    signedIntType zPadHRight, signedIntType zPadWLeft,
                    signedIntType zPadWRight, signedIntType strideH,
                    signedIntType strideW, intType *inputArr, intType *filterArr,
-                   intType *outArr) {
+                   intType *biasArr, intType *outArr, int bitlength, int scale) {
 #ifdef LOG_LAYERWISE
   INIT_ALL_IO_DATA_SENT;
   INIT_TIMER;
 #endif
 
+// 让偏左、偏上的填充更大
+  if (zPadWLeft < zPadWRight) {
+    std::swap(zPadWLeft, zPadWRight);
+  }
+  if (zPadHLeft < zPadHRight) {
+    std::swap(zPadHLeft, zPadHRight);
+  }
+  static int ctr = 1;
+  signedIntType newH = (((H + (zPadHLeft + zPadHRight) - FH) / strideH) + 1);
+  signedIntType newW = (((W + (zPadWLeft + zPadWRight) - FW) / strideW) + 1);
+
+  gemini::CheetahLinear::ConvMeta meta;
+  meta.ishape = gemini::TensorShape({CI, H, W});
+  meta.fshape = gemini::TensorShape({CI, FH, FW});
+  meta.n_filters = CO;
+
+  std::vector<gemini::Tensor<intType>> filters(CO);
+  std::vector<gemini::Tensor<intType>> bias(CO);
+  for (auto &f : filters) {
+    f.Reshape(meta.fshape);
+  }
+
+  for (int i = 0; i < FH; i++) {
+    for (int j = 0; j < FW; j++) {
+      for (int k = 0; k < CI; k++) {
+        for (int p = 0; p < CO; p++) {
+          filters.at(p)(k, i, j) =
+              getRingElt(Arr4DIdxRowM(filterArr, FH, FW, CI, CO, i, j, k, p));
+        }
+      }
+    }
+  }
+
+  const int npads = zPadHLeft + zPadHRight + zPadWLeft + zPadWRight;
+  meta.padding = npads == 0 ? gemini::Padding::VALID : gemini::Padding::SAME;
+  meta.stride = strideH;
+  meta.is_shared_input = kIsSharedInput;
+#ifndef NO_PRINT
+  printf(
+      "HomConv #%d called N=%ld, H=%ld, W=%ld, CI=%ld, FH=%ld, FW=%ld, "
+      "CO=%ld, S=%ld, Padding %s (%d %d %d %d)\n",
+      ctr++, N, meta.ishape.height(), meta.ishape.width(),
+      meta.ishape.channels(), meta.fshape.height(), meta.fshape.width(),
+      meta.n_filters, meta.stride,
+      (meta.padding == gemini::Padding::VALID ? "VALID" : "SAME"), zPadHLeft,
+      zPadHRight, zPadWLeft, zPadWRight);
+#endif
+#ifdef LOG_LAYERWISE
+  const int64_t io_counter = cheetah_linear->io_counter();
+#endif
+
+  for (int i = 0; i < N; ++i) {
+    gemini::Tensor<intType> image(meta.ishape);
+    for (int j = 0; j < H; j++) {
+      for (int k = 0; k < W; k++) {
+        for (int p = 0; p < CI; p++) {
+          image(p, j, k) =
+              getRingElt(Arr4DIdxRowM(inputArr, N, H, W, CI, i, j, k, p));
+        }
+      }
+    }
+    // 主要操作，调用conv_bias_relu
+    // 生成一个与image大小一致的随机矩阵
+    gemini::Tensor<uint64_t> M(meta.ishape);
+    if (party == CLIENT) { // CLIENT端选择M
+      get_random_tensor(M, bitlength);
+    } else {
+      get_zero_tensor(M);
+    }
+    gemini::Tensor<intType> offline_share0;
+    gemini::Tensor<intType> offline_share1;
+    //cheetah_linear->conv2d(image, filters, meta, out_tensor);
+    int T = 2;
+    cheetah_linear->conv_bias_relu_offline(M, filters, T, meta, offline_share0, offline_share1, bitlength, scale);
+    // 执行完上面的函数后，BOB方，有M、offline_share0([W*X]0)、offline_share1(V)
+    // ALICE方，有filters(W)、T、 offline_share0(R0)、offline_share1(R1)  
+    gemini::TensorShape shape_out = offline_share1.shape();
+    int C_out = shape_out.channels(), H_out = shape_out.height(), W_out = shape_out.width();
+    bool* B = new bool[C_out * H_out * W_out];
+    uint64_t* result = new uint64_t[C_out * H_out * W_out];
+    cheetah_linear->conv_bias_relu_online(image, M, filters, T, meta, offline_share0, offline_share1, biasArr, B, result, bitlength, scale);   
+    for (int j = 0; j < H_out; j++) {
+      for (int k = 0; k < W_out; k++) {
+        for (int p = 0; p < CO; p++) {
+          if (Arr4DIdxRowM(B, N, newH, newW, CO, i, j, k, p) == false) {
+            Arr4DIdxRowM(outArr, N, newH, newW, CO, i, j, k, p) = 0;
+          } else {
+            if (party == SERVER) {
+              Arr4DIdxRowM(outArr, N, newH, newW, CO, i, j, k, p) = result[p*newH*newW + j*newH + k];
+            } else {
+              Arr4DIdxRowM(outArr, N, newH, newW, CO, i, j, k, p) = offline_share0.data()[p*newH*newW + j*newH + k];
+            }
+          }
+        }
+      }
+    }
+  }
+
+#ifdef LOG_LAYERWISE
+  auto temp = TIMER_TILL_NOW;
+  FusedBN_ReLUTimeInMilliSec += temp; // 记录卷积时间
+  const int64_t nbytes_sent = cheetah_linear->io_counter() - io_counter;
+#ifndef NO_PRINT
+  std::cout << "Time in sec for current conv_bias_relu = [" << (temp / 1000.0)
+            << "] sent [" << (nbytes_sent / 1024. / 1024.) << "] MB"
+            << std::endl;
+#endif
+  uint64_t curComm;
+  FIND_ALL_IO_TILL_NOW(curComm);
+  FusedBN_ReLUCommSent += curComm;
+#endif
+}
+// 如果BN为True，说明是由BN调用的，否则是Conv调用的
+void Conv2DWrapper_seperate(signedIntType N, signedIntType H, signedIntType W,
+                   signedIntType CI, signedIntType FH, signedIntType FW,
+                   signedIntType CO, signedIntType zPadHLeft,
+                   signedIntType zPadHRight, signedIntType zPadWLeft,
+                   signedIntType zPadWRight, signedIntType strideH,
+                   signedIntType strideW, intType *inputArr, intType *filterArr,
+                   intType *outArr, bool BN) {
+#ifdef LOG_LAYERWISE
+  INIT_ALL_IO_DATA_SENT;
+  INIT_TIMER;
+#endif
+  // 让偏左、偏上的填充更大
   if (zPadWLeft < zPadWRight) {
     std::swap(zPadWLeft, zPadWRight);
   }
@@ -255,16 +570,16 @@ void Conv2DWrapper(signedIntType N, signedIntType H, signedIntType W,
   meta.padding = npads == 0 ? gemini::Padding::VALID : gemini::Padding::SAME;
   meta.stride = strideH;
   meta.is_shared_input = kIsSharedInput;
-
+#ifndef NO_PRINT
   printf(
-      "HomConv #%d called N=%ld, H=%ld, W=%ld, CI=%ld, FH=%ld, FW=%ld, "
+      "HomConv_seperate #%d called N=%ld, H=%ld, W=%ld, CI=%ld, FH=%ld, FW=%ld, "
       "CO=%ld, S=%ld, Padding %s (%d %d %d %d)\n",
       ctr++, N, meta.ishape.height(), meta.ishape.width(),
       meta.ishape.channels(), meta.fshape.height(), meta.fshape.width(),
       meta.n_filters, meta.stride,
       (meta.padding == gemini::Padding::VALID ? "VALID" : "SAME"), zPadHLeft,
       zPadHRight, zPadWLeft, zPadWRight);
-
+#endif
 #ifdef LOG_LAYERWISE
   const int64_t io_counter = cheetah_linear->io_counter();
 #endif
@@ -279,7 +594,144 @@ void Conv2DWrapper(signedIntType N, signedIntType H, signedIntType W,
         }
       }
     }
+    // 主要操作，调用conv2d
+    // gemini::Tensor<intType> out_tensor;
+    // cheetah_linear->conv2d(image, filters, meta, out_tensor);
+    // 主要操作，调用conv2d_offline和conv2d_online
+    gemini::Tensor<uint64_t> M(meta.ishape);
+    if (party == CLIENT) { // CLIENT端选择M
+      get_random_tensor(M, bitlength);
+    } else {
+      get_zero_tensor(M);
+    }
+    gemini::Tensor<intType> offline_share;
+    cheetah_linear->conv2d_offline(M, filters, meta, offline_share, BN);
+    gemini::TensorShape shape_out = offline_share.shape();
+    int C_out = shape_out.channels(), H_out = shape_out.height(), W_out = shape_out.width();
+    uint64_t* result = new uint64_t[C_out * H_out * W_out];
+    cheetah_linear->conv2d_online(image, M, filters, meta, offline_share, result, BN);
 
+    // for (int j = 0; j < newH; j++) {
+    //   for (int k = 0; k < newW; k++) {
+    //     for (int p = 0; p < CO; p++) {
+    //       if (party == SERVER) {
+    //         Arr4DIdxRowM(outArr, N, newH, newW, CO, i, j, k, p) = Arr3DIdxRowM(result, newH, newW, CO, j, k, p);
+    //       } else {
+    //         Arr4DIdxRowM(outArr, N, newH, newW, CO, i, j, k, p) = offline_share.data()[j*newW*CO + k*CO + p];
+    //       }
+    //     }
+    //   }
+    // }
+    
+    for (int j = 0; j < newH; j++) {
+      for (int k = 0; k < newW; k++) {
+        for (int p = 0; p < CO; p++) {
+          if (party == SERVER) {
+            //Arr4DIdxRowM(outArr, N, newH, newW, CO, i, j, k, p) = Arr3DIdxRowM(result, newH, newW, CO, j, k, p);
+            Arr4DIdxRowM(outArr, N, newH, newW, CO, i, j, k, p) = result[p*newH*newW + j*newH + k];
+          } else {
+            Arr4DIdxRowM(outArr, N, newH, newW, CO, i, j, k, p) = offline_share.data()[p*newH*newW + j*newH + k];
+          }
+        }
+      }
+    }
+  }
+
+#ifdef LOG_LAYERWISE
+  auto temp = TIMER_TILL_NOW;
+if (BN == false) {
+  Conv_sepTimeInMilliSec += temp; // 记录卷积时间
+} else {
+  BN_sepTimeInMilliSec += temp;
+}
+  const int64_t nbytes_sent = cheetah_linear->io_counter() - io_counter;
+#ifndef NO_PRINT
+  std::cout << "Time in sec for current conv = [" << (temp / 1000.0)
+            << "] sent [" << (nbytes_sent / 1024. / 1024.) << "] MB"
+            << std::endl;
+#endif
+  uint64_t curComm;
+  FIND_ALL_IO_TILL_NOW(curComm);
+if (BN == false) {
+  Conv_sepCommSent += curComm;
+} else {
+  BN_sepCommSent += curComm;
+}
+#endif
+}
+
+void Conv2DWrapper(signedIntType N, signedIntType H, signedIntType W,
+                   signedIntType CI, signedIntType FH, signedIntType FW,
+                   signedIntType CO, signedIntType zPadHLeft,
+                   signedIntType zPadHRight, signedIntType zPadWLeft,
+                   signedIntType zPadWRight, signedIntType strideH,
+                   signedIntType strideW, intType *inputArr, intType *filterArr,
+                   intType *outArr, bool BN) {
+#ifdef LOG_LAYERWISE
+  INIT_ALL_IO_DATA_SENT;
+  INIT_TIMER;
+#endif
+  // 让偏左、偏上的填充更大
+  if (zPadWLeft < zPadWRight) {
+    std::swap(zPadWLeft, zPadWRight);
+  }
+  if (zPadHLeft < zPadHRight) {
+    std::swap(zPadHLeft, zPadHRight);
+  }
+  static int ctr = 1;
+  signedIntType newH = (((H + (zPadHLeft + zPadHRight) - FH) / strideH) + 1);
+  signedIntType newW = (((W + (zPadWLeft + zPadWRight) - FW) / strideW) + 1);
+
+  gemini::CheetahLinear::ConvMeta meta;
+  meta.ishape = gemini::TensorShape({CI, H, W});
+  meta.fshape = gemini::TensorShape({CI, FH, FW});
+  meta.n_filters = CO;
+
+  std::vector<gemini::Tensor<intType>> filters(CO);
+  for (auto &f : filters) {
+    f.Reshape(meta.fshape);
+  }
+
+  for (int i = 0; i < FH; i++) {
+    for (int j = 0; j < FW; j++) {
+      for (int k = 0; k < CI; k++) {
+        for (int p = 0; p < CO; p++) {
+          filters.at(p)(k, i, j) =
+              getRingElt(Arr4DIdxRowM(filterArr, FH, FW, CI, CO, i, j, k, p));
+        }
+      }
+    }
+  }
+
+  const int npads = zPadHLeft + zPadHRight + zPadWLeft + zPadWRight;
+  meta.padding = npads == 0 ? gemini::Padding::VALID : gemini::Padding::SAME;
+  meta.stride = strideH;
+  meta.is_shared_input = kIsSharedInput;
+#ifndef NO_PRINT
+  printf(
+      "HomConv #%d called N=%ld, H=%ld, W=%ld, CI=%ld, FH=%ld, FW=%ld, "
+      "CO=%ld, S=%ld, Padding %s (%d %d %d %d)\n",
+      ctr++, N, meta.ishape.height(), meta.ishape.width(),
+      meta.ishape.channels(), meta.fshape.height(), meta.fshape.width(),
+      meta.n_filters, meta.stride,
+      (meta.padding == gemini::Padding::VALID ? "VALID" : "SAME"), zPadHLeft,
+      zPadHRight, zPadWLeft, zPadWRight);
+#endif
+#ifdef LOG_LAYERWISE
+  const int64_t io_counter = cheetah_linear->io_counter();
+#endif
+
+  for (int i = 0; i < N; ++i) {
+    gemini::Tensor<intType> image(meta.ishape);
+    for (int j = 0; j < H; j++) {
+      for (int k = 0; k < W; k++) {
+        for (int p = 0; p < CI; p++) {
+          image(p, j, k) =
+              getRingElt(Arr4DIdxRowM(inputArr, N, H, W, CI, i, j, k, p));
+        }
+      }
+    }
+    // 主要操作，调用conv2d
     gemini::Tensor<intType> out_tensor;
     cheetah_linear->conv2d(image, filters, meta, out_tensor);
 
@@ -295,12 +747,13 @@ void Conv2DWrapper(signedIntType N, signedIntType H, signedIntType W,
 
 #ifdef LOG_LAYERWISE
   auto temp = TIMER_TILL_NOW;
-  ConvTimeInMilliSec += temp;
+  ConvTimeInMilliSec += temp; // 记录卷积时间
   const int64_t nbytes_sent = cheetah_linear->io_counter() - io_counter;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current conv = [" << (temp / 1000.0)
             << "] sent [" << (nbytes_sent / 1024. / 1024.) << "] MB"
             << std::endl;
-
+#endif
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   ConvCommSent += curComm;
@@ -433,9 +886,10 @@ void BatchNorm(int32_t B, int32_t H, int32_t W, int32_t C,
   meta.target_base_mod = prime_mod;
   meta.is_shared_input = kIsSharedInput;
   meta.ishape = gemini::TensorShape({C, H, W});
-
+#ifndef NO_PRINT
   std::cout << "HomBN #" << batchNormCtr << " on shape " << meta.ishape
             << std::endl;
+#endif
   batchNormCtr++;
 
   gemini::Tensor<intType> scale_vec;
@@ -455,14 +909,14 @@ void BatchNorm(int32_t B, int32_t H, int32_t W, int32_t C,
         }
       }
     }
-
+    // 调用CheetahLinear::bn_direct进行BN计算
     cheetah_linear->bn_direct(in_tensor, scale_vec, meta, out_tensor);
 
     for (int32_t h = 0; h < H; ++h) {
       for (int32_t w = 0; w < W; ++w) {
         for (int32_t c = 0; c < C; ++c) {
           Arr4DIdxRowM(outArr, B, H, W, C, b, h, w, c) =
-              SecretAdd(out_tensor(c, h, w), bias[c]);
+              SecretAdd(out_tensor(c, h, w), bias[c]);//加上bias
         }
       }
     }
@@ -478,8 +932,10 @@ void BatchNorm(int32_t B, int32_t H, int32_t W, int32_t C,
   uint64_t curComm;
   FIND_ALL_IO_TILL_NOW(curComm);
   BatchNormCommSent += curComm;
+#ifndef NO_PRINT
   std::cout << "Time in sec for current BN = [" << (temp / 1000.0) << "] sent ["
             << (curComm / 1024. / 1024.) << "] MB" << std::endl;
+#endif
 #endif
 }
 
@@ -491,9 +947,10 @@ void ElemWiseActModelVectorMult(int32_t size, intType *inArr,
 #endif
 
   static int batchNormCtr = 1;
+#ifndef NO_PRINT
   printf("HomBN #%d via element-wise mult on %d points\n", batchNormCtr++,
          size);
-
+#endif
   gemini::CheetahLinear::BNMeta meta;
   meta.target_base_mod = prime_mod;
   meta.is_shared_input = kIsSharedInput;
@@ -513,6 +970,7 @@ void ElemWiseActModelVectorMult(int32_t size, intType *inArr,
     std::transform(inArr, inArr + size, in_vec.data(), getRingElt);
   }
   gemini::Tensor<intType> out_vec;
+  // 调用CheetahLinear::bn进行计算
   cheetah_linear->bn(in_vec, scale_vec, meta, out_vec);
   std::copy_n(out_vec.data(), out_vec.shape().num_elements(), outputArr);
 

@@ -1,0 +1,143 @@
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <title>安全模型预测</title>
+        <style>
+            body {
+                margin: 0;
+            }
+            .topbar-nav {
+                height: 20%;
+                color: white;
+                background-color: #333;
+                font-size: 25px;
+                text-align: center;
+                line-height: 150px;
+            }
+            .container {
+                text-align: center;
+                font-size: 10;
+            }
+            .left-container, .right-container{
+                width: 50%;
+                height: 80%;
+                float: left;
+            }
+
+            .left-container {
+                background-color: white;
+            }
+
+            .right-container {
+                font-size: large;
+                text-align: center;
+                background-color: white;
+            }
+
+            .img-container {
+                padding-left: 10%;
+                padding-top: 10%;
+                padding-bottom: 1%;
+                height: auto;
+                width: 50%;
+            }
+            
+            .select-container {
+                font-size: large;
+                padding-top: 1px;
+                padding-bottom: 5px;
+                text-align: center;
+            }
+
+            .result_show {
+                border: 1px solid black; 
+                height: 80%; 
+                width: 80%; 
+                text-align: left; 
+                display: inline-block;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="topbar-nav">Privacy Preserving Online Prediction</div>
+
+        <div class="container">
+            <div class="left-container">
+                <form method="post" action="deal" enctype="multipart/form-data">
+                    
+                    <div>
+                        <img class="img-container" id="img" src="{{src}}"/>
+                    </div>
+
+                    <div class="select-container" style="padding-left: 0; padding-bottom: 5px;">
+                        <input id="pic", type="file" onchange=showpic() name="image" hidden/>
+                        <button type="button" style="line-height: 30px; width: 100px;" id="select" onclick="getfile()">请选择图片</button>
+                        <span id="path">{{ return_name }}</span>
+                    </div>
+                    
+                    <div style="line-height: 50px; font-size: large;">
+                        请选择模型：
+                        <select class="select-container" id="model" name="model">
+                            <datalist>
+                                <!--为ResNet50 0或者SqueezeNet 1-->
+                                {{ datalist_control }}
+                                <option id = "first" value="ResNet50">ResNet50</option>
+                                <option id = "second" value="SqueezeNet">SqueezeNet</option>
+                            </datalist>
+                        </select>
+                    </div>
+
+                    <div>
+                        <input class="select-container" type="submit" onclick="showwati()" value="开始识别">
+                    </div>
+                </form>
+            </div>
+
+            <div class="right-container">
+                <h2>各层时延与识别结果展示</h2>
+                <textarea cols="80" rows="30" id="showtext">{{result_data}}</textarea>
+            </div>
+        </div>
+
+        <script>
+
+            var datalist_control = document.getElementById("model");
+            if (datalist_control.textContent.search("1") != -1) {
+                control = "1";
+            } else {
+                control = "0";
+            }
+            id_choose = ["first", "second"];
+            model_choose = ["ResNet50", "SqueezeNet"];
+            for(i = 0; i < id_choose.length; i++) {
+                var datalist = document.getElementById(id_choose[i]);
+                if (control != null && control == "1") {
+                    datalist.setAttribute("value", model_choose[model_choose.length - 1 - i]);
+                    datalist.innerHTML = model_choose[model_choose.length - 1 - i];
+                } else {
+                    datalist.setAttribute("value", model_choose[i]);
+                    datalist.innerHTML = model_choose[i];
+                }
+            }
+
+            function showwati() {
+                var myshow = document.getElementById("showtext");
+                myshow.innerHTML = "正在识别中......"
+            }
+
+            function getfile() {
+                var fileget = document.getElementById("pic");
+                fileget.click();
+            }
+
+            function showpic() {
+                var img = document.getElementById("pic").files[0];
+                var imgshow = document.getElementById("img");
+                var sr = window.URL.createObjectURL(img);
+                imgshow.setAttribute("src", sr);
+                document.getElementById("path").innerHTML = img.name;
+            }
+
+        </script>
+    </body>
+</html>

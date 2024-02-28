@@ -11,6 +11,7 @@
 #include "gemini/cheetah/shape_inference.h"
 #include "gemini/cheetah/tensor_shape.h"
 #include "gemini/cheetah/tensor_types.h"
+#include "gemini/core/util/ThreadPool.h"
 
 namespace gemini {
 

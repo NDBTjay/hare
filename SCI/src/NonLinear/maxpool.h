@@ -24,6 +24,7 @@ SOFTWARE.
 
 #include "NonLinear/relu-field.h"
 #include "NonLinear/relu-ring.h"
+#include "NonLinear/relu-he2.h"
 
 template <typename IO, typename type> class MaxPoolProtocol {
 public:

@@ -81,7 +81,7 @@ class HomConv2DSS {
 
   Code idealFunctionality(const Tensor<uint64_t> &in_tensor,
                           const std::vector<Tensor<uint64_t>> &filters,
-                          const Meta &meta, Tensor<uint64_t> &out_tensor) const;
+                          const Meta &meta, Tensor<uint64_t> &out_tensor, size_t nthreads) const;
 
  protected:
   size_t conv2DOneFilter(const std::vector<seal::Ciphertext> &enc_tensor,
